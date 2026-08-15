@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Freedom Mailer</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Login -->
+  <div id="login" class="login-wrap hidden">
+    <form id="login-form" class="login-card">
+      <div class="brand">✉️ Freedom Mailer</div>
+      <p class="muted">Compliant email &amp; SMS platform</p>
+      <input id="login-email" type="email" placeholder="Email" autocomplete="username" required />
+      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
+      <button type="submit">Sign in</button>
+      <div id="login-error" class="error"></div>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <aside class="sidebar">
+      <div class="brand">✉️ Freedom Mailer</div>
+      <nav id="nav"></nav>
+      <div class="sidebar-foot">
+        <div id="who" class="muted small"></div>
+        <button id="logout" class="link">Sign out</button>
+      </div>
+    </aside>
+    <main id="view"></main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

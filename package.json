@@ -1,0 +1,26 @@
+{
+  "name": "freedom-mailer",
+  "version": "1.0.0",
+  "description": "A compliant multi-channel messaging platform: email (SMTP + API) and SMS with an admin/user panel, opt-in list management, unsubscribe handling, and suppression lists.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/seed.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^5.0.7",
+    "nodemailer": "^6.9.15"
+  },
+  "license": "MIT"
+}
