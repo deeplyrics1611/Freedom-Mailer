@@ -16,17 +16,29 @@
   <div class="world-bg" aria-hidden="true"></div>
   <div class="scanlines" aria-hidden="true"></div>
 
-  <!-- Login -->
+  <!-- Public live landing + login -->
   <div id="login" class="login-wrap hidden">
-    <form id="login-form" class="login-card">
-      <div class="brand">Freedom Mailer</div>
-      <p class="brand-tag" id="login-tag">PHOENIX // GLOBAL RELAY</p>
-      <p class="muted">Bulk send from SMTP you own — letters, placeholders, paste-in leads.</p>
-      <input id="login-email" type="email" placeholder="Email" autocomplete="username" required />
-      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
-      <button type="submit">Sign in</button>
-      <div id="login-error" class="error"></div>
-    </form>
+    <div class="landing">
+      <div class="landing-copy">
+        <div class="brand">Freedom Mailer</div>
+        <p class="brand-tag" id="login-tag">PHOENIX // GLOBAL RELAY</p>
+        <h1>Licensed bulk mail from identities you own.</h1>
+        <p class="muted">Paste leads, send letters, track links. The operator issues access — there is no public signup.</p>
+        <div class="plan-cards">
+          <div class="plan-card"><b>3-day</b><span>Short licensed window</span></div>
+          <div class="plan-card"><b>Monthly</b><span>30 days per renewal</span></div>
+          <div class="plan-card"><b>Lifetime</b><span>No expiry</span></div>
+        </div>
+      </div>
+      <form id="login-form" class="login-card">
+        <div class="brand">Sign in</div>
+        <p class="muted">Use the account the admin created for you.</p>
+        <input id="login-email" type="email" placeholder="Email" autocomplete="username" required />
+        <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
+        <button type="submit">Enter panel</button>
+        <div id="login-error" class="error"></div>
+      </form>
+    </div>
   </div>
 
   <!-- App -->

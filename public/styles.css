@@ -244,6 +244,30 @@ a, .link {
 .login-wrap, #app, #toast { position: relative; z-index: 2; }
 
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.landing {
+  width: min(1080px, 100%);
+  display: grid;
+  grid-template-columns: 1.15fr 400px;
+  gap: 36px;
+  align-items: center;
+}
+.landing-copy h1 {
+  font-size: clamp(28px, 4vw, 42px);
+  text-transform: none;
+  letter-spacing: 0;
+  margin: 8px 0 12px;
+  line-height: 1.15;
+}
+.plan-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 22px; }
+.plan-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 12px;
+  backdrop-filter: blur(12px);
+}
+.plan-card b { display: block; color: var(--brand); margin-bottom: 4px; letter-spacing: .04em; }
+.plan-card span { color: var(--muted); font-size: 12px; }
 .login-card {
   background: var(--login-bg);
   border: 1px solid var(--border);
@@ -256,6 +280,7 @@ a, .link {
   backdrop-filter: blur(16px);
   box-shadow: var(--glow), 0 24px 80px rgba(0,0,0,.65);
 }
+.landing .login-card { width: 100%; max-width: 400px; justify-self: end; }
 .brand {
   font-size: 22px;
   font-weight: 800;
@@ -548,4 +573,6 @@ pre {
   #app { grid-template-columns: 1fr; }
   .sidebar { flex-direction: row; flex-wrap: wrap; }
   #nav { flex-direction: row; flex-wrap: wrap; }
+  .landing { grid-template-columns: 1fr; gap: 20px; }
+  .plan-cards { grid-template-columns: 1fr; }
 }

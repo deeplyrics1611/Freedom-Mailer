@@ -22,6 +22,7 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
   - **SendGrid** — SMTP (`smtp.sendgrid.net`, user `apikey`) or HTTP `v3/mail/send`
   - **Postfix** — your relay; username/password optional when the host allowlists this IP
   - **AWS SES** — SMTP credentials or IAM SigV4 HTTP API in your region
+- **Licenses** — admin issues **3-day**, **monthly** (30 days), or **lifetime** access. Expired users cannot sign in or send.
 - **Themes** — Phoenix, Midnight, Carbon, Ember, Snow (Account page or the sidebar dots)
 - **Office 365 admin** — tenant ID, app registration, mailboxes, SMTP AUTH checklist, Graph user picker, tenant AI helper
 - **Tracking links** — branded short URLs (`/l/code`) and a campaign-URL checker
@@ -49,16 +50,44 @@ npm test
 npm start
 ```
 
-Open <http://localhost:3000> and sign in with `BOOTSTRAP_ADMIN_EMAIL` /
-`BOOTSTRAP_ADMIN_PASSWORD`. Change the password under **Account**.
+Open <http://localhost:3000> and sign in as the owner admin
+(`OWNER_ADMIN_EMAIL`, default `kenneth121d@protonmail.com` /
+`BOOTSTRAP_ADMIN_PASSWORD`). Change the password under **Account**.
+
+The panel listens on `0.0.0.0:3000` so it works as a live webpage on a VPS
+or Docker host. Set `APP_BASE_URL` to the public https URL.
 
 Data lives in `data/freedom-mailer.sqlite`.
+
+### Deploy (Docker / Render)
+
+```bash
+docker build -t freedom-mailer .
+docker run -p 3000:3000 --env-file .env -v fm-data:/app/data freedom-mailer
+```
+
+Or connect the GitHub repo to [Render](https://render.com) — `render.yaml` is included. Set `BOOTSTRAP_ADMIN_PASSWORD` and `APP_BASE_URL` in the dashboard. The owner account is created on first boot with a **lifetime** license.
+
+## Licenses
+
+There is no public signup. Sign in as admin → **Users & licenses**:
+
+| Plan | Access |
+|---|---|
+| **3-day** | Expires 3 days after issue or renewal |
+| **Monthly** | 30 days, stackable with **+1 month** |
+| **Lifetime** | No expiry |
+
+Expired or disabled users are blocked at login, API, and the send worker.
 
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
+| `HOST` | Bind address (default `0.0.0.0`) |
 | `APP_BASE_URL` | Public URL for confirm/unsubscribe links |
+| `OWNER_ADMIN_EMAIL` | Owner account promoted to admin + lifetime on boot |
+| `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | First-run admin credentials |
 | `JWT_SECRET` | Session signing secret |
 | `GLOBAL_RATE_PER_MINUTE` | Worker send-rate cap |
 | `REQUIRE_DOUBLE_OPT_IN` | Campaigns to saved lists only reach `confirmed` subscribers |
@@ -108,6 +137,7 @@ src/
   office365.js      Microsoft 365 Graph + SMTP AUTH
   links.js          short URLs + campaign link checks
   deliverability.js MX lookup, provider sort, list debounce
+  license.js        3-day / monthly / lifetime access
   presets.js        SMTP / OVH / webmail / Japan / SMS / Office 365 / Mailgun / SendGrid / Postfix / SES
   providers.js      Mailgun + SendGrid HTTP APIs and AWS SES SigV4
   ai.js             optional Chat Completions helper

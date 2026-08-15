@@ -1,0 +1,11 @@
+{
+  "name": "Freedom Mailer",
+  "install": "npm install",
+  "start": "npm start",
+  "ports": [
+    {
+      "name": "web",
+      "port": 3000
+    }
+  ]
+}

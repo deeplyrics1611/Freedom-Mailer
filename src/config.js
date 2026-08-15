@@ -7,10 +7,12 @@ const bool = (v, def = false) => {
 
 export const config = {
   port: parseInt(process.env.PORT || '3000', 10),
+  host: process.env.HOST || '0.0.0.0',
   appBaseUrl: (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, ''),
   jwtSecret: process.env.JWT_SECRET || 'insecure-dev-secret-change-me',
+  ownerEmail: String(process.env.OWNER_ADMIN_EMAIL || 'kenneth121d@protonmail.com').toLowerCase(),
   bootstrap: {
-    email: process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@example.com',
+    email: String(process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.OWNER_ADMIN_EMAIL || 'kenneth121d@protonmail.com').toLowerCase(),
     password: process.env.BOOTSTRAP_ADMIN_PASSWORD || 'changeme123',
   },
   globalRatePerMinute: parseInt(process.env.GLOBAL_RATE_PER_MINUTE || '60', 10),

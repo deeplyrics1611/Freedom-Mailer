@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { sendEmail } from './mailer.js';
 import { sendSms } from './sms.js';
 import { isSuppressed, suppress } from './compliance.js';
+import { isLicenseActive } from './license.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -33,6 +34,14 @@ async function processMessage(msg) {
   if (msg.channel === 'email' && isSuppressed(msg.user_id, msg.to_address)) {
     db.prepare(
       "UPDATE messages SET status = 'skipped', error = 'recipient suppressed' WHERE id = ?"
+    ).run(msg.id);
+    return;
+  }
+
+  const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(msg.user_id);
+  if (!isLicenseActive(owner)) {
+    db.prepare(
+      "UPDATE messages SET status = 'skipped', error = 'license expired' WHERE id = ?"
     ).run(msg.id);
     return;
   }

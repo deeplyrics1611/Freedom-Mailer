@@ -93,7 +93,7 @@ const NAV = [
   ['apikeys', '🔑 API keys'],
   ['account', '⚙️ Account'],
 ];
-const ADMIN_NAV = [['users', '🛡️ Users (admin)']];
+const ADMIN_NAV = [['users', '🛡️ Users & licenses']];
 
 function renderNav() {
   const items = [...NAV, ...(state.user.role === 'admin' ? ADMIN_NAV : [])];
@@ -101,7 +101,7 @@ function renderNav() {
     .map(([r, label]) => `<a data-route="${r}" class="${r === state.route ? 'active' : ''}">${label}</a>`)
     .join('');
   $('nav').querySelectorAll('a').forEach((a) => a.addEventListener('click', () => go(a.dataset.route)));
-  $('who').textContent = `${state.user.email} · ${state.user.role}`;
+  $('who').textContent = `${state.user.email} · ${state.user.role}${state.user.license?.label ? ' · ' + state.user.license.label : ''}`;
 }
 
 function go(route) { state.route = route; renderNav(); views[route](); }
@@ -110,7 +110,12 @@ async function boot() {
   state.user = await api('/api/auth/me');
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   renderThemeSwitch();
-  renderNav(); go('compose');
+  renderNav();
+  if (state.user.role !== 'admin' && state.user.license && !state.user.license.ok) {
+    go('account');
+    return;
+  }
+  go('compose');
 }
 
 const views = {};
@@ -122,6 +127,7 @@ const badge = (status) => {
     smtp: 'muted', ovh: 'ok', webmail: 'warn', japan: 'ok', smtp_sms: 'warn',
     office365: 'ok', graph: 'ok', smtp_auth: 'warn',
     mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', api: 'ok',
+    '3day': 'warn', monthly: 'ok', lifetime: 'ok', expired: 'err',
   };
   return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
 };
@@ -1294,9 +1300,40 @@ views.apikeys = async () => {
 
 views.account = async () => {
   const cur = currentTheme();
+  const lic = state.user.license || {};
   view(`<div class="page-head"><h1>Account</h1></div>
     <p class="sub">${esc(state.user.email)} · role ${esc(state.user.role)}</p>
+    <div class="notice">
+      <b>License</b> ${badge(lic.ok ? (lic.plan || 'lifetime') : 'expired')} ${esc(lic.label || '')}
+      ${lic.expires_at ? `<div class="muted small">Expires ${esc(String(lic.expires_at).replace('T', ' ').slice(0, 16))} UTC</div>` : '<div class="muted small">No expiry</div>'}
+      ${lic.ok ? '' : '<div>This account cannot send until an admin renews the license (3-day, monthly, or lifetime).</div>'}
+    </div>
     <h2>Theme</h2>
+    <p class="muted small">Saved in this browser. Phoenix is the default dark-red look.</p>
+    <div class="theme-grid" id="theme-grid">
+      ${THEMES.map((t) => `<button type="button" class="theme-card${t.id === cur.id ? ' active' : ''}" data-theme-id="${t.id}">
+        <div class="theme-swatch" style="background:linear-gradient(135deg, ${t.a}, ${t.b})"></div>
+        <b>${esc(t.label)}</b>
+        <div class="muted small">${esc(t.tag)}</div>
+      </button>`).join('')}
+    </div>
+    <h2>Change password</h2>
+    <form id="pw-form" class="form-grid" style="max-width:520px">
+      <div class="field full"><label>Current password</label><input name="current" type="password" required></div>
+      <div class="field full"><label>New password (min 8)</label><input name="next" type="password" required></div>
+      <div class="actions full"><button type="submit">Update password</button></div>
+    </form>`);
+  $('theme-grid').querySelectorAll('[data-theme-id]').forEach((b) => {
+    b.addEventListener('click', () => applyTheme(b.dataset.themeId));
+  });
+  $('pw-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      e.target.reset(); toast('Password updated');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+};
     <p class="muted small">Saved in this browser. Phoenix is the default dark-red look.</p>
     <div class="theme-grid" id="theme-grid">
       ${THEMES.map((t) => `<button type="button" class="theme-card${t.id === cur.id ? ' active' : ''}" data-theme-id="${t.id}">
@@ -1324,27 +1361,60 @@ views.account = async () => {
 };
 
 views.users = async () => {
-  view(`<div class="page-head"><h1>Users</h1></div><p class="sub">Admin-only user management.</p>
-    <form id="u-form" class="form-grid" style="max-width:640px">
-      <div class="field"><label>Email</label><input name="email" type="email" required></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required></div>
-      <div class="field"><label>Role</label><select name="role"><option>user</option><option>admin</option></select></div>
-      <div class="field"><label>Daily quota</label><input name="daily_quota" type="number" value="1000"></div>
-      <div class="actions full"><button type="submit">Create user</button></div>
+  view(`<div class="page-head"><h1>Users &amp; licenses</h1></div>
+    <p class="sub">You are the operator. Create accounts and issue a <b>3-day</b>, <b>monthly</b>, or <b>lifetime</b> license. Expired users cannot sign in or send.</p>
+    <form id="u-form" class="form-grid">
+      <div class="field"><label>Email</label><input name="email" type="email" required placeholder="user@example.com"></div>
+      <div class="field"><label>Password</label><input name="password" type="password" required minlength="8" placeholder="min 8 characters"></div>
+      <div class="field"><label>License</label>
+        <select name="license_plan">
+          <option value="3day">3-day</option>
+          <option value="monthly">Monthly (30 days)</option>
+          <option value="lifetime">Lifetime</option>
+        </select>
+      </div>
+      <div class="field"><label>Role</label><select name="role"><option value="user">user</option><option value="admin">admin</option></select></div>
+      <div class="field"><label>Daily quota (optional)</label><input name="daily_quota" type="number" placeholder="plan default"></div>
+      <div class="actions full"><button type="submit">Create licensed user</button></div>
     </form>
     <table id="u-table"></table>`);
   $('u-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const b = Object.fromEntries(new FormData(e.target)); b.daily_quota = parseInt(b.daily_quota, 10);
+    const b = Object.fromEntries(new FormData(e.target));
+    if (b.daily_quota) b.daily_quota = parseInt(b.daily_quota, 10);
+    else delete b.daily_quota;
     try { await api('/api/users', { method: 'POST', body: b }); e.target.reset(); toast('User created'); views.users(); }
     catch (err) { toast(err.message, 'err'); }
   });
   const rows = await api('/api/users');
-  $('u-table').innerHTML = `<tr><th>Email</th><th>Role</th><th>Quota/day</th><th>Active</th><th></th></tr>` +
-    (rows.map((u) => `<tr><td>${esc(u.email)}</td><td>${badge(u.role === 'admin' ? 'verified' : 'pending')} ${u.role}</td>
-      <td>${u.daily_quota}</td><td>${u.active ? '✓' : '—'}</td>
-      <td>${u.id !== state.user.id ? `<button class="tiny secondary" data-t="${u.id}" data-a="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>
-        <button class="tiny danger" data-d="${u.id}">Delete</button>` : '<span class="muted small">you</span>'}</td></tr>`).join(''));
+  $('u-table').innerHTML = `<tr><th>Email</th><th>Role</th><th>License</th><th>Quota/day</th><th>Active</th><th></th></tr>` +
+    (rows.map((u) => {
+      const lic = u.license || {};
+      const exp = u.license_expires_at ? String(u.license_expires_at).replace('T', ' ').slice(0, 16) : '—';
+      return `<tr>
+      <td>${esc(u.email)}</td>
+      <td>${badge(u.role === 'admin' ? 'verified' : 'pending')} ${esc(u.role)}</td>
+      <td>${badge(lic.ok ? (u.license_plan || 'lifetime') : 'expired')} ${esc(lic.label || '')}
+        <div class="muted small">${esc(exp)}${exp !== '—' ? ' UTC' : ''}</div></td>
+      <td>${u.daily_quota}</td>
+      <td>${u.active ? '✓' : '—'}</td>
+      <td>${u.id !== state.user.id ? `
+        <button class="tiny secondary" data-lic="${u.id}" data-plan="3day">+3 days</button>
+        <button class="tiny secondary" data-lic="${u.id}" data-plan="monthly">+1 month</button>
+        <button class="tiny secondary" data-lic="${u.id}" data-plan="lifetime">Lifetime</button>
+        <button class="tiny secondary" data-t="${u.id}" data-a="${u.active ? 1 : 0}">${u.active ? 'Disable' : 'Enable'}</button>
+        <button class="tiny danger" data-d="${u.id}">Delete</button>` : '<span class="muted small">you</span>'}</td></tr>`;
+    }).join(''));
+  $('u-table').querySelectorAll('[data-lic]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/users/${b.dataset.lic}`, {
+        method: 'PATCH',
+        body: { license_plan: b.dataset.plan, license_action: b.dataset.plan === 'lifetime' ? 'set' : 'extend' },
+      });
+      toast('License updated');
+      views.users();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
   $('u-table').querySelectorAll('[data-t]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/users/${b.dataset.t}`, { method: 'PATCH', body: { active: b.dataset.a === '0' } }); views.users();
   }));

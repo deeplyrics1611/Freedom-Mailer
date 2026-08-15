@@ -153,7 +153,7 @@ router.post('/', (req, res) => {
       hostVal || 'smtp.office365.com',
       portVal,
       secureVal ? 1 : 0,
-      userVal || from_email || '',
+      kindVal === 'postfix' ? (userVal || '') : (userVal || from_email || ''),
       password || (kindVal === 'office365' ? 'graph' : ''),
       from_name || label,
       from_email,

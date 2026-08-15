@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: freedom-mailer
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OWNER_ADMIN_EMAIL
+        value: kenneth121d@protonmail.com
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        value: kenneth121d@protonmail.com
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: APP_BASE_URL
+        sync: false

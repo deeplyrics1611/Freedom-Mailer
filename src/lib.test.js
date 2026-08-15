@@ -22,6 +22,7 @@ import {
   mailgunApiBase,
   usesHttpApi,
 } from './providers.js';
+import { computeExpiry, extendExpiry, licenseStatus } from './license.js';
 
 describe('parseLeads', () => {
   it('reads one email per line', () => {
@@ -302,5 +303,45 @@ describe('providers', () => {
     assert.equal(usesHttpApi({ kind: 'mailgun', auth_mode: 'smtp' }), false);
     assert.equal(usesHttpApi({ kind: 'postfix' }), false);
     assert.equal(usesHttpApi({ kind: 'aws', auth_mode: 'api' }), true);
+  });
+});
+
+describe('license', () => {
+  it('computes 3-day, monthly, and lifetime expiry', () => {
+    const from = new Date('2026-08-15T00:00:00.000Z');
+    const d3 = computeExpiry('3day', from);
+    assert.equal(d3.expires_at, '2026-08-18T00:00:00.000Z');
+    const mo = computeExpiry('monthly', from);
+    assert.equal(mo.expires_at, '2026-09-14T00:00:00.000Z');
+    assert.equal(computeExpiry('lifetime', from).expires_at, null);
+    assert.ok(computeExpiry('nope').error);
+  });
+
+  it('extends from remaining time, or from now if expired', () => {
+    const now = new Date('2026-08-15T00:00:00.000Z');
+    const ext = extendExpiry('3day', '2026-08-16T00:00:00.000Z', now);
+    assert.equal(ext.expires_at, '2026-08-19T00:00:00.000Z');
+    const fromExpired = extendExpiry('monthly', '2026-08-01T00:00:00.000Z', now);
+    assert.equal(fromExpired.expires_at, '2026-09-14T00:00:00.000Z');
+  });
+
+  it('admins and lifetime stay active; expired 3-day does not', () => {
+    const now = new Date('2026-08-15T12:00:00.000Z');
+    assert.equal(licenseStatus({ role: 'admin', license_plan: '3day' }, now).ok, true);
+    assert.equal(licenseStatus({ role: 'user', license_plan: 'lifetime', active: 1 }, now).ok, true);
+    assert.equal(
+      licenseStatus(
+        { role: 'user', license_plan: '3day', license_expires_at: '2026-08-14T00:00:00.000Z', active: 1 },
+        now
+      ).reason,
+      'expired'
+    );
+    assert.equal(
+      licenseStatus(
+        { role: 'user', license_plan: 'monthly', license_expires_at: '2026-09-01T00:00:00.000Z', active: 1 },
+        now
+      ).ok,
+      true
+    );
   });
 });
