@@ -1334,31 +1334,6 @@ views.account = async () => {
     } catch (err) { toast(err.message, 'err'); }
   });
 };
-    <p class="muted small">Saved in this browser. Phoenix is the default dark-red look.</p>
-    <div class="theme-grid" id="theme-grid">
-      ${THEMES.map((t) => `<button type="button" class="theme-card${t.id === cur.id ? ' active' : ''}" data-theme-id="${t.id}">
-        <div class="theme-swatch" style="background:linear-gradient(135deg, ${t.a}, ${t.b})"></div>
-        <b>${esc(t.label)}</b>
-        <div class="muted small">${esc(t.tag)}</div>
-      </button>`).join('')}
-    </div>
-    <h2>Change password</h2>
-    <form id="pw-form" class="form-grid" style="max-width:520px">
-      <div class="field full"><label>Current password</label><input name="current" type="password" required></div>
-      <div class="field full"><label>New password (min 8)</label><input name="next" type="password" required></div>
-      <div class="actions full"><button type="submit">Update password</button></div>
-    </form>`);
-  $('theme-grid').querySelectorAll('[data-theme-id]').forEach((b) => {
-    b.addEventListener('click', () => applyTheme(b.dataset.themeId));
-  });
-  $('pw-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    try {
-      await api('/api/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-      e.target.reset(); toast('Password updated');
-    } catch (err) { toast(err.message, 'err'); }
-  });
-};
 
 views.users = async () => {
   view(`<div class="page-head"><h1>Users &amp; licenses</h1></div>

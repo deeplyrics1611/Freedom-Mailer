@@ -241,7 +241,7 @@ a, .link {
   padding: 0;
 }
 
-.login-wrap, #app, #toast { position: relative; z-index: 2; }
+.login-wrap, #app, #toast { position: relative; z-index: 5; }
 
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .landing {
