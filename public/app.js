@@ -577,10 +577,10 @@ views.warmup = async () => {
   const senders = data.senders || [];
   const presets = data.presets || [];
   view(`<div class="page-head"><h1>Mailbox warmup</h1></div>
-    <p class="sub">Age a mailbox you own by sending a few short notes a day to seed inboxes <b>you control</b>. Volume ramps slowly. This is not a campaign and not a purchased-list trick.</p>
+    <p class="sub">Age a mailbox you own by sending a few short notes a day to seed inboxes <b>you control</b>. Pick <b>High · 100/day</b> when you have several owned seed mailboxes. Auto-reply fires only from seeds that are also Senders.</p>
     <div class="notice">
-      Warmup only works when SPF / DKIM / DMARC already pass on the sending domain, and when seeds are mailboxes you (or a teammate who agreed) can open and reply from.
-      Reply from those inboxes — ISPs score conversations, not blasts. Paste-in leads and random .su/.ru names do not belong here.
+      Add every seed as a Sender (SMTP you own) and click <b>Use my other senders as seeds</b>. After each warmup note lands, that seed mailbox sends a delayed one-line reply back — no IMAP, no fake network.
+      SPF / DKIM / DMARC must already pass. This is not a campaign and not a purchased-list trick.
     </div>
 
     <section class="card admin-panel" style="margin:16px 0">
@@ -594,7 +594,7 @@ views.warmup = async () => {
         </div>
         <div class="field"><label>Ramp</label>
           <select name="preset" id="wu-preset">
-            ${presets.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')}
+            ${presets.map((p) => `<option value="${esc(p.id)}" ${p.id === 'high' ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
           </select>
         </div>
         <div class="field"><label>Plan name</label><input name="name" placeholder="Northwind hello@"></div>
@@ -604,6 +604,8 @@ jordan@yourbrand.com"></textarea>
         </div>
         <div class="check full"><input type="checkbox" name="owned_ok" id="wu-ok" required>
           <span>These seeds are mailboxes I control, or people who agreed to receive these notes.</span></div>
+        <div class="check full"><input type="checkbox" name="auto_reply" id="wu-auto" checked>
+          <span>Auto-reply from seeds that are also Senders (delayed 12–75 minutes).</span></div>
         <div class="actions full">
           <button type="submit">Create plan</button>
           <button type="button" class="secondary" id="wu-fill-senders">Use my other senders as seeds</button>
@@ -634,6 +636,7 @@ jordan@yourbrand.com"></textarea>
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
     b.owned_ok = $('wu-ok').checked;
+    b.auto_reply = $('wu-auto').checked;
     b.sender_id = parseInt(b.sender_id, 10);
     try {
       await api('/api/warmup', { method: 'POST', body: b });
@@ -648,6 +651,7 @@ jordan@yourbrand.com"></textarea>
     const bar = pct(st.today_placed || 0, p.target_today || 1);
     const seeds = (p.seeds || []).map((s) => `<li>
         <code>${esc(s.email)}</code>
+        ${s.can_auto_reply ? badge('ok') + ' auto-reply' : '<span class="muted small">add as Sender to auto-reply</span>'}
         ${s.reply_count ? `<span class="muted small">${s.reply_count} ${s.reply_count === 1 ? 'reply' : 'replies'}</span>` : ''}
         <button type="button" class="tiny secondary" data-reply="${p.id}" data-seed="${s.id}">Log reply</button>
         <button type="button" class="tiny danger" data-dropseed="${p.id}" data-seed="${s.id}">Remove</button>
@@ -656,18 +660,22 @@ jordan@yourbrand.com"></textarea>
       <header>
         <div>
           <b>${esc(p.name || p.sender_email || 'Warmup')}</b>
-          ${badge(p.status)} ${p.at_cap ? badge('ok') + ' at cap' : ''}
+          ${badge(p.status)} ${p.auto_reply ? badge('ok') + ' auto-reply on' : badge('paused') + ' auto-reply off'}
+          ${p.at_cap ? badge('ok') + ' at cap' : ''}
           <div class="muted small">${esc(p.sender_email || '')}${p.sender_verified ? ' · verified' : ' · verify the sender'}</div>
         </div>
         <div class="muted small">Day ${p.progress_days || 0} · ${p.start_per_day}+${p.increase_per_day}/day · cap ${p.max_per_day}</div>
       </header>
       <div class="usage-bar"><span style="width:${bar}%"></span></div>
-      <div class="muted small">Today ${st.today_placed || 0} / ${p.target_today} queued · ${st.today_sent || 0} sent · ${st.today_failed || 0} failed · ${st.replies || 0} replies logged · ${st.sent || 0} sent all-time</div>
+      <div class="muted small">Today ${st.today_placed || 0} / ${p.target_today} outbound · ${st.today_replies || 0} auto-replies sent · ${st.today_failed || 0} failed · ${st.replies || 0} replies · ${st.sent || 0} sent all-time</div>
+      ${p.can_hit_target ? '' : `<p class="error">Not enough seeds to reach ${p.target_today}/day (max 20 notes per seed). Add more owned Senders as seeds — 100/day needs at least 5.</p>`}
+      ${p.auto_reply && (p.auto_reply_ready || 0) === 0 ? '<p class="error">Auto-reply needs seeds that are also Senders. Use “Use my other senders as seeds” or add those mailboxes under Senders.</p>' : ''}
       ${p.pause_reason ? `<p class="error">${esc(p.pause_reason)}</p>` : ''}
       <div class="row client-actions" style="margin-top:10px">
         ${p.status === 'active'
           ? `<button class="tiny secondary" data-wu="${p.id}" data-status="paused">Pause</button>`
           : `<button class="tiny" data-wu="${p.id}" data-status="active">Start / resume</button>`}
+        <button class="tiny secondary" data-autotoggle="${p.id}" data-on="${p.auto_reply ? 0 : 1}">${p.auto_reply ? 'Disable auto-reply' : 'Enable auto-reply'}</button>
         <button class="tiny danger" data-wudel="${p.id}">Delete</button>
       </div>
       <h3 class="muted small" style="margin:12px 0 4px">Seeds</h3>
@@ -683,6 +691,13 @@ jordan@yourbrand.com"></textarea>
     try {
       await api(`/api/warmup/${b.dataset.wu}`, { method: 'PATCH', body: { status: b.dataset.status } });
       toast(b.dataset.status === 'active' ? 'Warmup running' : 'Warmup paused');
+      views.warmup();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
+  $('wu-plans').querySelectorAll('[data-autotoggle]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/warmup/${b.dataset.autotoggle}`, { method: 'PATCH', body: { auto_reply: b.dataset.on === '1' } });
+      toast(b.dataset.on === '1' ? 'Auto-reply on' : 'Auto-reply off');
       views.warmup();
     } catch (err) { toast(err.message, 'err'); }
   }));

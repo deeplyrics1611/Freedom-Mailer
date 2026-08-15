@@ -32,6 +32,10 @@ import {
   renderNote,
   warmupPreset,
   WARMUP_NOTES,
+  perSeedCap,
+  replySubject,
+  validRamp,
+  queueAutoReply,
 } from './warmup.js';
 
 describe('parseLeads', () => {
@@ -484,8 +488,17 @@ describe('warmup', () => {
     assert.equal(dailyTarget({ start_per_day: 5, increase_per_day: 3, max_per_day: 40, progress_days: 0 }), 5);
     assert.equal(dailyTarget({ start_per_day: 5, increase_per_day: 3, max_per_day: 40, progress_days: 5 }), 20);
     assert.equal(dailyTarget({ start_per_day: 5, increase_per_day: 3, max_per_day: 40, progress_days: 20 }), 40);
+    assert.equal(dailyTarget({ start_per_day: 20, increase_per_day: 10, max_per_day: 100, progress_days: 8 }), 100);
     assert.equal(warmupPreset('gentle').start_per_day, 3);
+    assert.equal(warmupPreset('high').max_per_day, 100);
     assert.equal(warmupPreset('nope').id, 'standard');
+    assert.equal(validRamp(20, 10, 100), true);
+    assert.equal(validRamp(20, 10, 101), false);
+    assert.equal(perSeedCap(100, 5), 20);
+    assert.equal(perSeedCap(100, 10), 10);
+    assert.equal(replySubject('Quick check-in'), 'Re: Quick check-in');
+    assert.equal(replySubject('Re: Quick check-in'), 'Re: Quick check-in');
+    assert.equal(queueAutoReply({ source: 'warmup_reply', warmup_plan_id: 1 }).skipped, 'not-warmup');
   });
 
   it('pauses on a real bounce cluster, not a single fail', () => {

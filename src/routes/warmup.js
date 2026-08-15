@@ -9,6 +9,7 @@ import {
   parseSeeds,
   publicPlan,
   insertSeeds,
+  validRamp,
 } from '../warmup.js';
 
 const router = Router();
@@ -41,7 +42,7 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { sender_id, name = '', preset = 'standard', seeds = '', owned_ok, start_per_day, increase_per_day, max_per_day } =
+  const { sender_id, name = '', preset = 'standard', seeds = '', owned_ok, auto_reply = true, start_per_day, increase_per_day, max_per_day } =
     req.body || {};
   if (!owned_ok) {
     return res.status(400).json({
@@ -68,15 +69,15 @@ router.post('/', (req, res) => {
   const start = start_per_day !== undefined && start_per_day !== '' ? parseInt(start_per_day, 10) : p.start_per_day;
   const inc = increase_per_day !== undefined && increase_per_day !== '' ? parseInt(increase_per_day, 10) : p.increase_per_day;
   const cap = max_per_day !== undefined && max_per_day !== '' ? parseInt(max_per_day, 10) : p.max_per_day;
-  if (![start, inc, cap].every((n) => Number.isFinite(n) && n >= 0) || start < 1 || cap < start || cap > 80) {
-    return res.status(400).json({ error: 'Ramp must stay between 1 and 80 messages/day' });
+  if (!validRamp(start, inc, cap)) {
+    return res.status(400).json({ error: 'Ramp must stay between 1 and 100 messages/day' });
   }
 
   const info = db
     .prepare(
       `INSERT INTO warmup_plans
-         (user_id, sender_id, name, status, start_per_day, increase_per_day, max_per_day)
-       VALUES (?, ?, ?, 'paused', ?, ?, ?)`
+         (user_id, sender_id, name, status, start_per_day, increase_per_day, max_per_day, auto_reply)
+       VALUES (?, ?, ?, 'paused', ?, ?, ?, ?)`
     )
     .run(
       req.user.id,
@@ -84,7 +85,8 @@ router.post('/', (req, res) => {
       String(name || sender.label || sender.from_email).slice(0, 80),
       start,
       inc,
-      cap
+      cap,
+      auto_reply ? 1 : 0
     );
   insertSeeds(info.lastInsertRowid, parsed.seeds);
   const row = db
@@ -99,7 +101,7 @@ router.post('/', (req, res) => {
 router.patch('/:id', (req, res) => {
   const plan = planFor(req, req.params.id);
   if (!plan) return res.status(404).json({ error: 'Not found' });
-  const { status, name, start_per_day, increase_per_day, max_per_day } = req.body || {};
+  const { status, name, start_per_day, increase_per_day, max_per_day, auto_reply } = req.body || {};
 
   if (status !== undefined) {
     if (!['active', 'paused'].includes(status)) {
@@ -130,12 +132,15 @@ router.patch('/:id', (req, res) => {
     const start = start_per_day !== undefined ? parseInt(start_per_day, 10) : plan.start_per_day;
     const inc = increase_per_day !== undefined ? parseInt(increase_per_day, 10) : plan.increase_per_day;
     const cap = max_per_day !== undefined ? parseInt(max_per_day, 10) : plan.max_per_day;
-    if (![start, inc, cap].every((n) => Number.isFinite(n) && n >= 0) || start < 1 || cap < start || cap > 80) {
-      return res.status(400).json({ error: 'Ramp must stay between 1 and 80 messages/day' });
+    if (!validRamp(start, inc, cap)) {
+      return res.status(400).json({ error: 'Ramp must stay between 1 and 100 messages/day' });
     }
     db.prepare(
       'UPDATE warmup_plans SET start_per_day = ?, increase_per_day = ?, max_per_day = ? WHERE id = ?'
     ).run(start, inc, cap, plan.id);
+  }
+  if (auto_reply !== undefined) {
+    db.prepare('UPDATE warmup_plans SET auto_reply = ? WHERE id = ?').run(auto_reply ? 1 : 0, plan.id);
   }
 
   const row = db

@@ -167,6 +167,8 @@ addColumn('contacts', 'custom2', "TEXT NOT NULL DEFAULT ''");
 addColumn('campaigns', 'channel', "TEXT NOT NULL DEFAULT 'email'");
 addColumn('messages', 'warmup_plan_id', 'INTEGER');
 addColumn('messages', 'not_before', 'TEXT');
+addColumn('messages', 'message_id', "TEXT NOT NULL DEFAULT ''");
+addColumn('messages', 'in_reply_to_id', 'INTEGER');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS office_tenants (
@@ -240,6 +242,7 @@ CREATE TABLE IF NOT EXISTS warmup_plans (
   paused_at          TEXT,
   last_queued_on     TEXT,
   pause_reason       TEXT NOT NULL DEFAULT '',
+  auto_reply         INTEGER NOT NULL DEFAULT 1,
   created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -265,5 +268,7 @@ CREATE TABLE IF NOT EXISTS mx_cache (
   checked_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+addColumn('warmup_plans', 'auto_reply', 'INTEGER NOT NULL DEFAULT 1');
 
 export default db;

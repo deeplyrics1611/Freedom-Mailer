@@ -6,7 +6,7 @@ import { isSuppressed, suppress } from './compliance.js';
 import { isLicenseActive } from './license.js';
 import { boolSetting } from './settings.js';
 import { linkBaseFor } from './links.js';
-import { queueDueWarmup } from './warmup.js';
+import { queueDueWarmup, queueAutoReply } from './warmup.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -59,31 +59,42 @@ async function processMessage(msg) {
   try {
     if (msg.channel === 'sms') {
       await sendSms({ to: msg.to_address, body: msg.text || msg.subject || '' });
-    } else {
-      const sender = msg.sender_id
-        ? db.prepare('SELECT * FROM senders WHERE id = ?').get(msg.sender_id)
-        : null;
-      // Rebuild the one-click List-Unsubscribe header for list mail.
-      let headers;
-      if (msg.unsub_token) {
-        const link = `${linkBaseFor(owner)}/u/${msg.unsub_token}`;
-        headers = {
-          'List-Unsubscribe': `<${link}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        };
-      }
-      await sendEmail({
-        sender,
-        to: msg.to_address,
-        subject: msg.subject,
-        html: msg.channel === 'smtp_sms' ? undefined : msg.html,
-        text: msg.text,
-        headers: msg.channel === 'smtp_sms' ? undefined : headers,
-      });
+      db.prepare("UPDATE messages SET status = 'sent', error = '', sent_at = datetime('now') WHERE id = ?").run(
+        msg.id
+      );
+      return;
     }
-    db.prepare("UPDATE messages SET status = 'sent', error = '', sent_at = datetime('now') WHERE id = ?").run(
-      msg.id
-    );
+    const sender = msg.sender_id
+      ? db.prepare('SELECT * FROM senders WHERE id = ?').get(msg.sender_id)
+      : null;
+    // Rebuild the one-click List-Unsubscribe header for list mail.
+    let headers;
+    if (msg.unsub_token) {
+      const link = `${linkBaseFor(owner)}/u/${msg.unsub_token}`;
+      headers = {
+        'List-Unsubscribe': `<${link}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      };
+    }
+    if (msg.in_reply_to_id) {
+      const parent = db.prepare('SELECT message_id FROM messages WHERE id = ?').get(msg.in_reply_to_id);
+      if (parent?.message_id) {
+        const mid = String(parent.message_id).startsWith('<') ? parent.message_id : `<${parent.message_id}>`;
+        headers = { ...(headers || {}), 'In-Reply-To': mid, References: mid };
+      }
+    }
+    const messageId = await sendEmail({
+      sender,
+      to: msg.to_address,
+      subject: msg.subject,
+      html: msg.channel === 'smtp_sms' ? undefined : msg.html,
+      text: msg.text,
+      headers: msg.channel === 'smtp_sms' ? undefined : headers,
+    });
+    db.prepare(
+      "UPDATE messages SET status = 'sent', error = '', sent_at = datetime('now'), message_id = ? WHERE id = ?"
+    ).run(String(messageId || '').slice(0, 200), msg.id);
+    if (msg.source === 'warmup') queueAutoReply({ ...msg, status: 'sent' }, messageId);
   } catch (err) {
     const message = String(err.message || err);
     const finalFail = msg.attempts + 1 >= MAX_ATTEMPTS;

@@ -29,11 +29,20 @@ export const WARMUP_PRESETS = [
     max_per_day: 60,
     blurb: 'Only if SPF/DKIM/DMARC already pass and the domain has some history.',
   },
+  {
+    id: 'high',
+    label: 'High · 100/day',
+    start_per_day: 20,
+    increase_per_day: 10,
+    max_per_day: 100,
+    blurb: 'Ramps to 100/day. Add at least five seed mailboxes that are also Senders so auto-replies can fire.',
+  },
 ];
 
 export const MAX_SEEDS = 50;
 export const MAX_PLANS = 20;
-export const MAX_PER_SEED_PER_DAY = 2;
+export const MAX_PER_DAY = 100;
+export const MAX_PER_SEED_PER_DAY = 20;
 
 /** Short 1:1 notes. No links, no pitches, no third-party brands. */
 export const WARMUP_NOTES = [
@@ -53,6 +62,43 @@ export const WARMUP_NOTES = [
 
 export function warmupPreset(id) {
   return WARMUP_PRESETS.find((p) => p.id === id) || WARMUP_PRESETS[1];
+}
+
+export const WARMUP_REPLIES = [
+  { text: 'Got it — landed in the inbox.' },
+  { text: 'Received, thanks.' },
+  { text: 'Yep, I see this. Looks clean.' },
+  { text: 'Here — one-line reply as requested.' },
+  { text: 'Thanks for the ping. Inbox, not spam.' },
+  { text: 'All good on my side.' },
+  { text: 'Saw this come through. Catch you later.' },
+  { text: 'Noted. Mailbox is working.' },
+];
+
+export function validRamp(start, inc, cap) {
+  return [start, inc, cap].every((n) => Number.isFinite(n) && n >= 0) && start >= 1 && cap >= start && cap <= MAX_PER_DAY;
+}
+
+/** How many notes one seed may get today so the plan can still hit `target`. */
+export function perSeedCap(target, seedCount) {
+  const seeds = Math.max(1, Number(seedCount) || 1);
+  const t = Math.max(1, Number(target) || 1);
+  return Math.min(MAX_PER_SEED_PER_DAY, Math.max(2, Math.ceil(t / seeds)));
+}
+
+export function replySubject(subject) {
+  const s = String(subject || '').trim();
+  if (/^re:\s/i.test(s)) return s;
+  return `Re: ${s || 'your note'}`;
+}
+
+export function replyDelayMinutes(messageId) {
+  return 12 + (Math.abs(Number(messageId) || 0) % 63);
+}
+
+export function pickReply(planId, seedId, slot) {
+  const i = Math.abs((Number(planId) || 0) + (Number(seedId) || 0) * 3 + (Number(slot) || 0)) % WARMUP_REPLIES.length;
+  return WARMUP_REPLIES[i];
 }
 
 export function dailyTarget(plan) {
@@ -83,8 +129,9 @@ export function sqliteNow(d = new Date()) {
 export function spreadTimes(count, now = new Date()) {
   const n = Math.max(0, parseInt(count, 10) || 0);
   if (!n) return [];
-  const windowMs = 10 * 60 * 60 * 1000;
-  const gap = Math.min(90 * 60 * 1000, Math.max(8 * 60 * 1000, Math.floor(windowMs / n)));
+  const windowMs = 12 * 60 * 60 * 1000;
+  const minGap = n > 40 ? 4 * 60 * 1000 : 8 * 60 * 1000;
+  const gap = Math.min(90 * 60 * 1000, Math.max(minGap, Math.floor(windowMs / n)));
   return Array.from({ length: n }, (_, i) => sqliteNow(new Date(now.getTime() + i * gap)));
 }
 
@@ -138,10 +185,11 @@ export function planStats(planId) {
   const today = db
     .prepare(
       `SELECT
-         SUM(CASE WHEN status IN ('queued','sending','sent') THEN 1 ELSE 0 END) placed,
-         SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) sent,
-         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) failed,
-         SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) queued
+         SUM(CASE WHEN source = 'warmup' AND status IN ('queued','sending','sent') THEN 1 ELSE 0 END) placed,
+         SUM(CASE WHEN source = 'warmup' AND status = 'sent' THEN 1 ELSE 0 END) sent,
+         SUM(CASE WHEN source = 'warmup' AND status = 'failed' THEN 1 ELSE 0 END) failed,
+         SUM(CASE WHEN source = 'warmup' AND status = 'queued' THEN 1 ELSE 0 END) queued,
+         SUM(CASE WHEN source = 'warmup_reply' AND status = 'sent' THEN 1 ELSE 0 END) replies_sent
        FROM messages
        WHERE warmup_plan_id = ? AND created_at >= datetime('now','start of day')`
     )
@@ -149,8 +197,8 @@ export function planStats(planId) {
   const recent = db
     .prepare(
       `SELECT
-         SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) sent,
-         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) failed
+         SUM(CASE WHEN source = 'warmup' AND status = 'sent' THEN 1 ELSE 0 END) sent,
+         SUM(CASE WHEN source = 'warmup' AND status = 'failed' THEN 1 ELSE 0 END) failed
        FROM messages
        WHERE warmup_plan_id = ? AND created_at >= datetime('now','-2 day')`
     )
@@ -158,8 +206,8 @@ export function planStats(planId) {
   const all = db
     .prepare(
       `SELECT
-         SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) sent,
-         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) failed
+         SUM(CASE WHEN source = 'warmup' AND status = 'sent' THEN 1 ELSE 0 END) sent,
+         SUM(CASE WHEN source = 'warmup' AND status = 'failed' THEN 1 ELSE 0 END) failed
        FROM messages WHERE warmup_plan_id = ?`
     )
     .get(planId);
@@ -171,6 +219,7 @@ export function planStats(planId) {
     today_sent: today?.sent || 0,
     today_failed: today?.failed || 0,
     today_queued: today?.queued || 0,
+    today_replies: today?.replies_sent || 0,
     recent_sent: recent?.sent || 0,
     recent_failed: recent?.failed || 0,
     sent: all?.sent || 0,
@@ -186,14 +235,34 @@ export function publicPlan(row) {
       'SELECT id, email, name, kind, active, reply_count, created_at FROM warmup_seeds WHERE plan_id = ? ORDER BY id'
     )
     .all(row.id);
+  const senderMap = new Map(
+    db
+      .prepare("SELECT id, from_email FROM senders WHERE user_id = ? AND kind != 'smtp_sms'")
+      .all(row.user_id)
+      .map((s) => [String(s.from_email || '').toLowerCase(), s.id])
+  );
+  const warmingEmail = String(row.sender_email || '').toLowerCase();
+  const decorated = seeds.map((s) => {
+    const sid = senderMap.get(s.email);
+    return {
+      ...s,
+      can_auto_reply: !!(sid && s.email !== warmingEmail),
+    };
+  });
+  const activeSeeds = decorated.filter((s) => s.active);
   const target = dailyTarget(row);
+  const autoReady = activeSeeds.filter((s) => s.can_auto_reply).length;
+  const reach = activeSeeds.length * perSeedCap(target, activeSeeds.length);
   const atCap = target >= (row.max_per_day || 0) && (row.progress_days || 0) > 0;
   return {
     ...row,
+    auto_reply: row.auto_reply !== 0,
     target_today: target,
     at_cap: atCap,
-    seeds,
-    seed_count: seeds.filter((s) => s.active).length,
+    seeds: decorated,
+    seed_count: activeSeeds.length,
+    auto_reply_ready: autoReady,
+    can_hit_target: reach >= target,
     stats,
     pause_reason: row.pause_reason || '',
   };
@@ -210,26 +279,35 @@ function maybePauseForBounces(plan) {
   return true;
 }
 
-function pickSeedsForDay(plan, need, fromEmail) {
+function pickSeedsForDay(plan, need, fromEmail, target) {
   const rows = db
     .prepare(
       `SELECT s.*,
          (SELECT COUNT(*) FROM messages m
            WHERE m.warmup_plan_id = s.plan_id
+             AND m.source = 'warmup'
              AND lower(m.to_address) = s.email
              AND m.created_at >= datetime('now','start of day')) AS today_n
        FROM warmup_seeds s
        WHERE s.plan_id = ? AND s.active = 1
        ORDER BY today_n ASC, s.id ASC`
     )
-    .all(plan.id);
+    .all(plan.id)
+    .filter((s) => s.email !== String(fromEmail || '').toLowerCase() && !isSuppressed(plan.user_id, s.email));
+  const cap = perSeedCap(target, rows.length);
+  const counts = new Map(rows.map((s) => [s.id, s.today_n || 0]));
   const out = [];
-  for (const s of rows) {
-    if (out.length >= need) break;
-    if (s.email === String(fromEmail || '').toLowerCase()) continue;
-    if (s.today_n >= MAX_PER_SEED_PER_DAY) continue;
-    if (isSuppressed(plan.user_id, s.email)) continue;
-    out.push(s);
+  let guard = 0;
+  while (out.length < need && guard++ < need + rows.length + 2) {
+    let added = false;
+    for (const s of rows) {
+      if (out.length >= need) break;
+      if ((counts.get(s.id) || 0) >= cap) continue;
+      out.push(s);
+      counts.set(s.id, (counts.get(s.id) || 0) + 1);
+      added = true;
+    }
+    if (!added) break;
   }
   return out;
 }
@@ -274,7 +352,7 @@ export function queueDueWarmup(now = new Date()) {
       continue;
     }
 
-    const seeds = pickSeedsForDay(plan, need, sender.from_email);
+    const seeds = pickSeedsForDay(plan, need, sender.from_email, target);
     if (!seeds.length) continue;
 
     const times = spreadTimes(seeds.length, now);
@@ -285,7 +363,7 @@ export function queueDueWarmup(now = new Date()) {
     );
     const tx = db.transaction(() => {
       seeds.forEach((seed, i) => {
-        const note = renderNote(pickNote(plan.id, seed.id, progressDays), seed);
+        const note = renderNote(pickNote(plan.id, seed.id, progressDays + i), seed);
         insert.run(
           plan.user_id,
           sender.id,
@@ -323,3 +401,68 @@ export function insertSeeds(planId, seeds) {
   });
   tx(seeds);
 }
+
+/**
+ * After a warmup note is delivered, queue a delayed reply from the seed
+ * mailbox if that address is also a Sender on the same account.
+ */
+export function queueAutoReply(msg, messageId) {
+  if (!msg || msg.source !== 'warmup' || !msg.warmup_plan_id) return { skipped: 'not-warmup' };
+  const plan = db.prepare('SELECT * FROM warmup_plans WHERE id = ?').get(msg.warmup_plan_id);
+  if (!plan || plan.auto_reply === 0) return { skipped: 'off' };
+  if (plan.status !== 'active') return { skipped: 'paused' };
+
+  const exists = db
+    .prepare('SELECT id FROM messages WHERE in_reply_to_id = ?')
+    .get(msg.id);
+  if (exists) return { skipped: 'already' };
+
+  const seedEmail = String(msg.to_address || '').toLowerCase();
+  const seedSender = db
+    .prepare(
+      `SELECT * FROM senders
+       WHERE user_id = ? AND kind != 'smtp_sms' AND lower(from_email) = ?
+       ORDER BY id DESC LIMIT 1`
+    )
+    .get(msg.user_id, seedEmail);
+  if (!seedSender) return { skipped: 'seed-not-sender' };
+  if (seedSender.id === msg.sender_id) return { skipped: 'same-mailbox' };
+
+  const origin = db.prepare('SELECT * FROM senders WHERE id = ?').get(msg.sender_id);
+  const replyTo = String(origin?.from_email || '').toLowerCase();
+  if (!replyTo || replyTo === seedEmail) return { skipped: 'no-origin' };
+  if (isSuppressed(msg.user_id, replyTo)) return { skipped: 'suppressed' };
+
+  const seed = db
+    .prepare('SELECT * FROM warmup_seeds WHERE plan_id = ? AND email = ?')
+    .get(plan.id, seedEmail);
+  const reply = pickReply(plan.id, seed?.id || 0, msg.id);
+  const rendered = renderNote({ subject: replySubject(msg.subject), text: reply.text }, {
+    email: replyTo,
+    name: origin?.from_name || '',
+  });
+  const delay = replyDelayMinutes(msg.id);
+  const notBefore = sqliteNow(new Date(Date.now() + delay * 60 * 1000));
+
+  db.prepare(
+    `INSERT INTO messages
+       (user_id, channel, sender_id, to_address, subject, html, text, status, source, warmup_plan_id, not_before, in_reply_to_id)
+     VALUES (?, 'email', ?, ?, ?, ?, ?, 'queued', 'warmup_reply', ?, ?, ?)`
+  ).run(
+    msg.user_id,
+    seedSender.id,
+    replyTo,
+    rendered.subject,
+    rendered.html,
+    rendered.text,
+    plan.id,
+    notBefore,
+    msg.id
+  );
+  if (seed) db.prepare('UPDATE warmup_seeds SET reply_count = reply_count + 1 WHERE id = ?').run(seed.id);
+  if (messageId) {
+    db.prepare('UPDATE messages SET message_id = ? WHERE id = ?').run(String(messageId).slice(0, 200), msg.id);
+  }
+  return { ok: true, delay_minutes: delay };
+}
+
