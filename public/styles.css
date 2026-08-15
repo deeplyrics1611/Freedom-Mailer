@@ -635,7 +635,7 @@ pre {
 .dns-steps li { margin: 6px 0; }
 .dns-record {
   font-size: 13px;
-  border: 1px solid var(--line, #333);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 14px;
   margin: 0 0 12px;
