@@ -17,6 +17,8 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
   - **Webmail** — Gmail, Outlook/Microsoft 365, Yahoo, iCloud, Zoho (official SMTP + app passwords)
   - **Japan mail** — Yahoo! Mail Japan, Sakura, Xserver, Lolipop, GMO, Biglobe, OCN
   - **SMTP → SMS** — short text emailed to `number@carrier-gateway`
+  - **Office 365 tenant** — Entra app + Graph `sendMail`, or SMTP AUTH on `smtp.office365.com`
+- **Office 365 admin** — tenant ID, app registration, mailboxes, SMTP AUTH checklist, Graph user picker, tenant AI helper
 - **Placeholders** — `{{name}}` `{{first_name}}` `{{email}}` `{{phone}}` `{{company}}` `{{title}}` `{{custom1}}` plus `{{first_name|there}}` fallbacks.
 - **HTML letters** — signature request, document review, invoice, shared file, video meeting, calendar invite, receipt. Branded with **your** company name and **your** URLs.
 - **AI help** — rewrite / translate / suggest subject. Uses `OPENAI_API_KEY` when set; otherwise local letter generation still works.
@@ -65,9 +67,17 @@ Data lives in `data/freedom-mailer.sqlite`.
 3. Confirm the people opted in, then **Queue send**.
 4. The worker delivers at `GLOBAL_RATE_PER_MINUTE`, injects an unsubscribe footer, and logs each attempt.
 
+### Office 365 tenant
+
+1. Open **Office 365**. Save your Directory (tenant) ID, app (client) ID, and client secret.
+2. Choose **Microsoft Graph** (Mail.Send + admin consent) or **SMTP AUTH** (`smtp.office365.com:587`).
+3. Add a licensed mailbox in that tenant as the From address and **Verify**.
+4. That sender appears in **Compose**.
+
+Graph application permissions: `Mail.Send` (required), `User.Read.All` and `Organization.Read.All` (optional, to list mailboxes / show the org name).
+
 Letters are for **your** organization. Do not impersonate DocuSign, Adobe,
-Microsoft, Google, Zoom, banks, or anyone else — the generator will not produce
-those brands, and using this tool that way is abuse.
+Microsoft, Google, Zoom, banks, or anyone else.
 
 ## Architecture
 
@@ -77,7 +87,8 @@ src/
   letters.js        HTML letter generator
   placeholders.js   {{merge}} fields
   leads.js          paste parser + SMTP-to-SMS addressing
-  presets.js        SMTP / OVH / webmail / Japan / SMS gateways
+  office365.js      Microsoft 365 Graph + SMTP AUTH
+  presets.js        SMTP / OVH / webmail / Japan / SMS / Office 365
   ai.js             optional Chat Completions helper
   mailer.js         Nodemailer transports
   queue.js          rate-limited delivery

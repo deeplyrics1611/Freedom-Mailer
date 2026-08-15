@@ -4,6 +4,13 @@ import { parseLeads, toSmsAddress, isEmail } from './leads.js';
 import { renderTemplate, expandVars, listPlaceholders } from './placeholders.js';
 import { generateLetter, letterCatalog } from './letters.js';
 import { SMTP_PRESETS, SENDER_KINDS } from './presets.js';
+import {
+  tokenUrl,
+  buildGraphMessage,
+  diagnoseOfficeError,
+  OFFICE_SMTP,
+  GRAPH_PERMISSIONS,
+} from './office365.js';
 
 describe('parseLeads', () => {
   it('reads one email per line', () => {
@@ -97,11 +104,38 @@ describe('letters', () => {
   });
 });
 
+describe('office365', () => {
+  it('builds token and graph payloads', () => {
+    assert.equal(
+      tokenUrl('contoso.onmicrosoft.com'),
+      'https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token'
+    );
+    const payload = buildGraphMessage({
+      from: 'a@contoso.com',
+      to: 'b@ex.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      headers: { 'List-Unsubscribe': '<https://x/u/1>' },
+    });
+    assert.equal(payload.saveToSentItems, true);
+    assert.equal(payload.message.toRecipients[0].emailAddress.address, 'b@ex.com');
+    assert.equal(payload.message.internetMessageHeaders[0].name, 'List-Unsubscribe');
+    assert.equal(OFFICE_SMTP.host, 'smtp.office365.com');
+    assert.ok(GRAPH_PERMISSIONS.some((p) => p.id === 'Mail.Send' && p.required));
+  });
+
+  it('diagnoses tenant errors', () => {
+    assert.match(diagnoseOfficeError('AADSTS7000215 Invalid client secret'), /secret/i);
+    assert.match(diagnoseOfficeError('SmtpClientAuthenticationDisabled'), /SMTP AUTH/i);
+  });
+});
+
 describe('presets', () => {
-  it('covers smtp, ovh, webmail, japan, smtp_sms', () => {
+  it('covers smtp, ovh, webmail, japan, smtp_sms, office365', () => {
     const kinds = new Set(SENDER_KINDS.map((k) => k.id));
-    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms']) assert.ok(kinds.has(id));
+    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms', 'office365']) assert.ok(kinds.has(id));
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.mail.ovh.net'));
     assert.ok(SMTP_PRESETS.some((p) => p.host.includes('yahoo.co.jp')));
+    assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.office365.com'));
   });
 });

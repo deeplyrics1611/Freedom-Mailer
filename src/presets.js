@@ -27,6 +27,11 @@ export const SENDER_KINDS = [
     label: 'SMTP → SMS',
     blurb: 'Email-to-SMS carrier gateway. Recipients need a phone number.',
   },
+  {
+    id: 'office365',
+    label: 'Office 365',
+    blurb: 'Your Microsoft 365 tenant via Graph sendMail or smtp.office365.com SMTP AUTH.',
+  },
 ];
 
 export const SMTP_PRESETS = [
@@ -182,6 +187,15 @@ export const SMTP_PRESETS = [
     port: 587,
     secure: false,
     hint: 'OCN mailbox SMTP. Authenticate with the OCN mail account.',
+  },
+  {
+    id: 'office365-smtp',
+    kind: 'office365',
+    label: 'Microsoft 365 SMTP AUTH',
+    host: 'smtp.office365.com',
+    port: 587,
+    secure: false,
+    hint: 'Prefer the Office 365 admin page for tenant Graph apps. SMTP AUTH must be enabled on the mailbox.',
   },
   {
     id: 'smtp-sms',

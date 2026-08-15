@@ -1,8 +1,8 @@
 import nodemailer from 'nodemailer';
 import { config } from './config.js';
+import { db } from './db.js';
+import { getAppToken, graphFetch, sendViaGraph } from './office365.js';
 
-// Build a nodemailer transport from a stored sender identity, or fall back to
-// the system SMTP credentials in the environment.
 export function transportForSender(sender) {
   if (sender) {
     return nodemailer.createTransport({
@@ -10,6 +10,7 @@ export function transportForSender(sender) {
       port: sender.port,
       secure: !!sender.secure,
       auth: { user: sender.username, pass: sender.password },
+      requireTLS: sender.host === 'smtp.office365.com',
     });
   }
   const s = config.systemSmtp;
@@ -30,14 +31,45 @@ export function fromAddress(sender) {
   return `"${s.fromName}" <${s.fromEmail || s.user}>`;
 }
 
-// Verify SMTP credentials without sending mail.
+function officeTenant(sender) {
+  if (!sender?.office_tenant_id) return null;
+  return db.prepare('SELECT * FROM office_tenants WHERE id = ?').get(sender.office_tenant_id);
+}
+
 export async function verifyTransport(sender) {
+  if (sender?.kind === 'office365') {
+    const tenant = officeTenant(sender);
+    const mode = sender.auth_mode || tenant?.send_mode;
+    if (mode === 'graph') {
+      if (!tenant) throw new Error('Office 365 tenant not found for Graph send');
+      const tok = await getAppToken(tenant);
+      await graphFetch(
+        tok.access_token,
+        `users/${encodeURIComponent(sender.from_email)}?$select=id,mail,userPrincipalName`
+      );
+      return true;
+    }
+  }
   const transport = transportForSender(sender);
   await transport.verify();
   return true;
 }
 
 export async function sendEmail({ sender, to, subject, html, text, headers }) {
+  if (sender?.kind === 'office365') {
+    const tenant = officeTenant(sender);
+    const mode = sender.auth_mode || tenant?.send_mode;
+    if (mode === 'graph' && tenant) {
+      return sendViaGraph(tenant, {
+        from: sender.from_email,
+        to,
+        subject,
+        html,
+        text,
+        headers,
+      });
+    }
+  }
   const transport = transportForSender(sender);
   const info = await transport.sendMail({
     from: fromAddress(sender),

@@ -8,7 +8,7 @@ const router = Router();
 router.use(requireAuth);
 
 const publicFields =
-  'id, label, kind, provider, host, port, secure, username, from_name, from_email, sms_gateway, verified, created_at';
+  'id, label, kind, provider, host, port, secure, username, from_name, from_email, sms_gateway, office_tenant_id, auth_mode, verified, created_at';
 
 router.get('/presets', (req, res) => {
   res.json({ kinds: SENDER_KINDS, presets: SMTP_PRESETS, sms_gateways: SMS_GATEWAYS });
@@ -34,6 +34,8 @@ router.post('/', (req, res) => {
     from_email,
     sms_gateway = '',
     preset,
+    office_tenant_id = null,
+    auth_mode = '',
   } = req.body || {};
 
   let hostVal = host;
@@ -52,7 +54,8 @@ router.post('/', (req, res) => {
     providerVal = providerVal || p.id;
   }
 
-  if (!label || !hostVal || !username || !password || !from_email) {
+  const isOfficeGraph = kindVal === 'office365' && (auth_mode === 'graph' || !password);
+  if (!label || !from_email || (!isOfficeGraph && (!hostVal || !username || !password))) {
     return res.status(400).json({
       error: 'label, host, username, password, from_email are required',
     });
@@ -64,22 +67,24 @@ router.post('/', (req, res) => {
   const info = db
     .prepare(
       `INSERT INTO senders
-        (user_id, label, kind, provider, host, port, secure, username, password, from_name, from_email, sms_gateway)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (user_id, label, kind, provider, host, port, secure, username, password, from_name, from_email, sms_gateway, office_tenant_id, auth_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       req.user.id,
       label,
       kindVal,
       providerVal,
-      hostVal,
+      hostVal || 'smtp.office365.com',
       portVal,
       secureVal ? 1 : 0,
-      username,
-      password,
+      username || from_email,
+      password || 'graph',
       from_name || label,
       from_email,
-      sms_gateway
+      sms_gateway,
+      office_tenant_id || null,
+      auth_mode || (kindVal === 'office365' ? 'graph' : '')
     );
   res.status(201).json({ id: info.lastInsertRowid });
 });

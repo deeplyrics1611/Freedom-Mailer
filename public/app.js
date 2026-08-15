@@ -1,5 +1,6 @@
 // Freedom Mailer panel
 const state = { token: localStorage.getItem('fm_token') || null, user: null, route: 'compose' };
+let o365Selected = null;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -40,6 +41,7 @@ $('logout').addEventListener('click', logout);
 const NAV = [
   ['compose', '✍️ Compose'],
   ['dashboard', '📊 Dashboard'],
+  ['office365', '🏢 Office 365'],
   ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
@@ -76,6 +78,7 @@ const badge = (status) => {
     sent: 'ok', confirmed: 'ok', verified: 'ok', queued: 'warn', pending: 'warn',
     sending: 'warn', draft: 'muted', failed: 'err', skipped: 'muted', unsubscribed: 'muted',
     smtp: 'muted', ovh: 'ok', webmail: 'warn', japan: 'ok', smtp_sms: 'warn',
+    office365: 'ok', graph: 'ok', smtp_auth: 'warn',
   };
   return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
 };
@@ -102,7 +105,8 @@ views.dashboard = async () => {
     card(s.confirmed, 'Confirmed subscribers'), card(s.contacts, 'Contacts'),
     card(s.lists, 'Lists'), card(s.campaigns, 'Campaigns'),
     card(s.sent, 'Messages sent'), card(s.queued, 'In queue'),
-    card(s.failed, 'Failed'), card(s.suppressed, 'Suppressed'),
+    card(s.failed, 'Failed'),     card(s.suppressed, 'Suppressed'),
+    card(s.office_tenants || 0, 'Office 365 tenants'),
     card(s.sms_enabled ? 'On' : 'Off', 'Twilio SMS'),
     card(s.ai_enabled ? 'On' : 'Local', 'AI help'),
   ].join('');
@@ -342,11 +346,244 @@ Jane Doe <jane@example.com>"></textarea>
   });
 };
 
+views.office365 = async () => {
+  const [tenants, guide] = await Promise.all([
+    api('/api/office365'),
+    api('/api/office365/guide'),
+  ]);
+  const selectedId = o365Selected && tenants.some((t) => t.id === o365Selected) ? o365Selected : (tenants[0]?.id || null);
+  o365Selected = selectedId;
+
+  view(`<div class="page-head"><h1>Office 365 admin</h1></div>
+    <p class="sub">Send through <b>your</b> Microsoft 365 tenant: Graph <code>sendMail</code> (app registration) or SMTP AUTH on <code>smtp.office365.com</code>.</p>
+    <div class="kind-tabs" id="o365-tabs">
+      <button type="button" data-tab="tenant" class="active">Tenant</button>
+      <button type="button" data-tab="mailboxes">Mailboxes</button>
+      <button type="button" data-tab="smtp">SMTP AUTH</button>
+      <button type="button" data-tab="ai">AI</button>
+    </div>
+
+    <section data-pane="tenant">
+      <form id="o365-form" class="form-grid">
+        <div class="field"><label>Label</label><input name="label" required placeholder="Contoso production"></div>
+        <div class="field"><label>Send mode</label>
+          <select name="send_mode">
+            ${guide.modes.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Directory (tenant) ID</label><input name="tenant_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+        <div class="field"><label>Tenant domain</label><input name="tenant_domain" placeholder="contoso.onmicrosoft.com or contoso.com"></div>
+        <div class="field"><label>Application (client) ID</label><input name="client_id" placeholder="Entra app ID"></div>
+        <div class="field"><label>Client secret</label><input name="client_secret" type="password" placeholder="shown once in Entra"></div>
+        <div class="field"><label>Default from mailbox (UPN)</label><input name="default_mailbox" placeholder="noreply@contoso.com"></div>
+        <div class="field"><label>From name</label><input name="from_name" placeholder="Contoso"></div>
+        <div class="actions full"><button type="submit">Save tenant</button></div>
+      </form>
+      <p class="muted small" id="o365-mode-blurb">${esc(guide.modes[0]?.blurb || '')}</p>
+      <table id="o365-table"></table>
+      <h2>Entra app checklist</h2>
+      <ol class="muted" style="padding-left:18px">${guide.entra.map((s) => `<li style="margin:6px 0">${esc(s)}</li>`).join('')}</ol>
+      <p class="muted small">Graph permissions: ${guide.permissions.map((p) => `<code>${esc(p.id)}</code>${p.required ? '*' : ''}`).join(' · ')}</p>
+    </section>
+
+    <section data-pane="mailboxes" class="hidden">
+      <div class="notice">Pick a tenant, then add a licensed mailbox in that tenant as the From address. Graph does not need the mailbox password. SMTP AUTH does.</div>
+      <div class="row">
+        <div class="field" style="min-width:240px"><label>Tenant</label>
+          <select id="mb-tenant">${tenants.map((t) => `<option value="${t.id}" ${t.id === selectedId ? 'selected' : ''}>${esc(t.label)} · ${esc(t.send_mode)}</option>`).join('')}</select>
+        </div>
+      </div>
+      <form id="mb-form" class="form-grid" style="margin-top:12px">
+        <div class="field"><label>Mailbox UPN / email</label><input name="email" required placeholder="billing@contoso.com"></div>
+        <div class="field"><label>Display name</label><input name="display_name" placeholder="Billing"></div>
+        <div class="field full" id="mb-pass-wrap"><label>Mailbox password (SMTP AUTH only)</label><input name="password" type="password"></div>
+        <div class="actions full">
+          <button type="submit">Add mailbox sender</button>
+          <button type="button" class="secondary" id="mb-refresh">Load from Graph</button>
+        </div>
+      </form>
+      <div id="mb-graph" class="parse-box hidden"></div>
+      <table id="mb-table" style="margin-top:12px"></table>
+    </section>
+
+    <section data-pane="smtp" class="hidden">
+      <div class="notice">Host <code>smtp.office365.com</code> port <code>587</code> STARTTLS. Authenticated SMTP must be on for the mailbox. Graph mode is preferred when SMTP AUTH is locked down.</div>
+      <ol class="muted" style="padding-left:18px">${guide.smtp.map((s) => `<li style="margin:6px 0">${esc(s)}</li>`).join('')}</ol>
+      <pre>Set-CASMailbox -Identity user@yourdomain.com -SmtpClientAuthenticationDisabled $false</pre>
+    </section>
+
+    <section data-pane="ai" class="hidden">
+      <div class="ai-box">
+        <h2 style="margin-top:0">AI for this tenant</h2>
+        <p class="muted small">${guide.ai_enabled ? 'Model connected — rewrite copy as your organization (not as Microsoft).' : 'Local setup assistant is always available. Set OPENAI_API_KEY to rewrite tenant mail in your voice.'}</p>
+        <div class="form-grid">
+          <div class="field"><label>Action</label>
+            <select id="o365-ai-action">
+              <option value="office_setup">Setup assistant (Entra + SMTP)</option>
+              <option value="office_tone">Rewrite as tenant org mail</option>
+              <option value="placeholders">Placeholders</option>
+            </select>
+          </div>
+          <div class="field"><label>Language</label>
+            <select id="o365-ai-lang"><option value="en">English</option><option value="ja">日本語</option></select>
+          </div>
+          <div class="field full"><label>Prompt / letter HTML to rewrite</label>
+            <textarea id="o365-ai-prompt" rows="4" placeholder="Rewrite this announcement from our company, keep {{first_name}}."></textarea>
+          </div>
+        </div>
+        <button type="button" id="o365-ai-run">Run AI</button>
+        <div id="o365-ai-out" class="parse-box" style="margin-top:12px"></div>
+      </div>
+    </section>`);
+
+  const panes = [...document.querySelectorAll('[data-pane]')];
+  $('o365-tabs').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    $('o365-tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+    panes.forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== b.dataset.tab));
+  }));
+
+  $('o365-form').querySelector('[name=send_mode]').addEventListener('change', (e) => {
+    const m = guide.modes.find((x) => x.id === e.target.value);
+    $('o365-mode-blurb').textContent = m ? m.blurb : '';
+  });
+
+  $('o365-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    try {
+      const r = await api('/api/office365', { method: 'POST', body: b });
+      o365Selected = r.id; toast('Tenant saved'); views.office365();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  $('o365-table').innerHTML = `<tr><th>Label</th><th>Mode</th><th>Tenant</th><th>Mailbox</th><th>Status</th><th></th></tr>` +
+    (tenants.map((t) => `<tr>
+      <td><b>${esc(t.label)}</b>${t.org_name ? `<div class="muted small">${esc(t.org_name)}</div>` : ''}</td>
+      <td>${badge(t.send_mode)}</td>
+      <td class="mono small">${esc(t.tenant_domain || t.tenant_id || '—')}</td>
+      <td>${esc(t.default_mailbox || '—')}</td>
+      <td>${t.verified ? badge('verified') : badge('pending')}</td>
+      <td>
+        <button class="tiny secondary" data-use="${t.id}">Select</button>
+        <button class="tiny secondary" data-v="${t.id}">Verify</button>
+        <button class="tiny danger" data-d="${t.id}">Delete</button>
+      </td></tr>`).join('')
+      || `<tr><td colspan="6" class="muted">No tenants yet. Save your Entra app above.</td></tr>`);
+
+  $('o365-table').querySelectorAll('[data-use]').forEach((b) => b.addEventListener('click', () => {
+    o365Selected = parseInt(b.dataset.use, 10); views.office365();
+  }));
+  $('o365-table').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      const r = await api(`/api/office365/${b.dataset.v}/verify`, { method: 'POST' });
+      toast(r.org ? `Verified · ${r.org}` : (r.note || 'Verified'));
+      if (r.consent_url) prompt('Admin consent URL (open as a tenant admin):', r.consent_url);
+      views.office365();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
+  $('o365-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Delete this tenant and its Office 365 senders?')) return;
+    await api(`/api/office365/${b.dataset.d}`, { method: 'DELETE' });
+    if (o365Selected === parseInt(b.dataset.d, 10)) o365Selected = null;
+    views.office365();
+  }));
+
+  async function loadMailboxes() {
+    const tid = $('mb-tenant')?.value;
+    if (!tid) return;
+    o365Selected = parseInt(tid, 10);
+    const t = tenants.find((x) => x.id === o365Selected);
+    $('mb-pass-wrap').classList.toggle('hidden', t?.send_mode !== 'smtp_auth');
+    const data = await api(`/api/office365/${tid}/mailboxes`);
+    $('mb-table').innerHTML = `<tr><th>From</th><th>Mode</th><th>Status</th><th></th></tr>` +
+      (data.local.map((s) => `<tr>
+        <td>${esc(s.from_name)} &lt;${esc(s.from_email)}&gt;</td>
+        <td>${badge(s.auth_mode || data.send_mode)}</td>
+        <td>${s.verified ? badge('verified') : badge('pending')}</td>
+        <td><button class="tiny secondary" data-mv="${s.id}">Verify</button>
+            <button class="tiny danger" data-md="${s.id}">Remove</button></td></tr>`).join('')
+        || `<tr><td colspan="4" class="muted">No mailboxes linked yet.</td></tr>`);
+    $('mb-table').querySelectorAll('[data-mv]').forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await api(`/api/office365/${tid}/mailboxes/${b.dataset.mv}/verify`, { method: 'POST' });
+        toast('Mailbox verified'); loadMailboxes();
+      } catch (err) { toast(err.message, 'err'); }
+    }));
+    $('mb-table').querySelectorAll('[data-md]').forEach((b) => b.addEventListener('click', async () => {
+      await api(`/api/senders/${b.dataset.md}`, { method: 'DELETE' }); loadMailboxes();
+    }));
+    return data;
+  }
+
+  if ($('mb-tenant')) {
+    $('mb-tenant').addEventListener('change', () => loadMailboxes().catch((e) => toast(e.message, 'err')));
+    loadMailboxes().catch(() => {});
+  }
+
+  $('mb-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const tid = $('mb-tenant').value;
+    if (!tid) return toast('Save a tenant first', 'err');
+    const b = Object.fromEntries(new FormData(e.target));
+    try {
+      await api(`/api/office365/${tid}/mailboxes`, { method: 'POST', body: b });
+      e.target.reset(); toast('Mailbox added — it appears in Compose senders after verify');
+      loadMailboxes();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  $('mb-refresh')?.addEventListener('click', async () => {
+    const tid = $('mb-tenant')?.value;
+    if (!tid) return toast('Save a tenant first', 'err');
+    try {
+      const data = await loadMailboxes();
+      const box = $('mb-graph');
+      if (data.graph_error) {
+        box.classList.remove('hidden');
+        box.innerHTML = `<span class="muted">${esc(data.graph_error)} (User.Read.All is optional.)</span>`;
+        return;
+      }
+      if (!data.graph.length) {
+        box.classList.remove('hidden');
+        box.innerHTML = '<span class="muted">Graph returned no users. Check User.Read.All + admin consent, or paste a UPN above.</span>';
+        return;
+      }
+      box.classList.remove('hidden');
+      box.innerHTML = data.graph.slice(0, 30).map((u) =>
+        `<button type="button" class="chip" data-upn="${esc(u.email)}" data-dn="${esc(u.displayName)}">${esc(u.displayName || u.email)} · ${esc(u.email)}</button>`
+      ).join(' ');
+      box.querySelectorAll('[data-upn]').forEach((ch) => ch.addEventListener('click', () => {
+        $('mb-form').email.value = ch.dataset.upn;
+        $('mb-form').display_name.value = ch.dataset.dn || '';
+      }));
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  $('o365-ai-run')?.addEventListener('click', async () => {
+    $('o365-ai-out').textContent = 'Working…';
+    try {
+      const r = await api('/api/office365/ai', {
+        method: 'POST',
+        body: {
+          action: $('o365-ai-action').value,
+          prompt: $('o365-ai-prompt').value,
+          html: $('o365-ai-prompt').value,
+          language: $('o365-ai-lang').value,
+        },
+      });
+      const notes = Array.isArray(r.notes) ? r.notes.filter(Boolean) : [r.notes];
+      $('o365-ai-out').innerHTML = notes.map((n) => `<div style="margin:6px 0">${esc(n)}</div>`).join('') +
+        (r.subject ? `<p><b>Subject</b> ${esc(r.subject)}</p>` : '') +
+        (r.html && r.html !== $('o365-ai-prompt').value ? `<pre>${esc(r.html).slice(0, 2000)}</pre>` : '');
+    } catch (err) { $('o365-ai-out').textContent = ''; toast(err.message, 'err'); }
+  });
+};
+
 views.senders = async () => {
   const presets = await api('/api/senders/presets');
   view(`<div class="page-head"><h1>Senders</h1></div>
     <p class="sub">SMTP for mailboxes and domains you own. OVH, webmail, and Japan hosts are presets that fill the official server — not a proxy.</p>
-    <div class="notice">SOCKS5 / IP-rotation relays are not supported. Japanese mailboxes send through Yahoo Japan, Sakura, Xserver, and the other official SMTP hosts below.</div>
+    <div class="notice">Microsoft 365 tenant (Graph app + SMTP AUTH) lives under <a data-go="office365">Office 365</a>. Use this page for other SMTP hosts, or a single Outlook mailbox.</div>
     <div class="kind-tabs" id="kind-tabs">
       ${presets.kinds.map((k) => `<button type="button" data-kind="${k.id}">${esc(k.label)}</button>`).join('')}
     </div>
@@ -398,6 +635,8 @@ views.senders = async () => {
   $('preset-sel').addEventListener('change', applyPreset);
   $('sms-gw-sel').addEventListener('change', () => { if ($('sms-gw-sel').value) $('sms-gw').value = $('sms-gw-sel').value; });
   applyKind();
+
+  document.querySelector('[data-go="office365"]')?.addEventListener('click', () => go('office365'));
 
   $('sender-form').addEventListener('submit', async (e) => {
     e.preventDefault();

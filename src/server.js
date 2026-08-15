@@ -20,6 +20,7 @@ import publicRoutes from './routes/public.js';
 import letterRoutes from './routes/letters.js';
 import aiRoutes from './routes/ai.js';
 import leadRoutes from './routes/leads.js';
+import office365Routes from './routes/office365.js';
 import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +65,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
     queued: one("SELECT COUNT(*) n FROM messages WHERE user_id = ? AND status='queued'"),
     failed: one("SELECT COUNT(*) n FROM messages WHERE user_id = ? AND status='failed'"),
     suppressed: one('SELECT COUNT(*) n FROM suppressions WHERE user_id = ?'),
+    office_tenants: one('SELECT COUNT(*) n FROM office_tenants WHERE user_id = ?'),
     sms_enabled: smsEnabled(),
     ai_enabled: aiEnabled(),
   });
@@ -92,6 +94,7 @@ app.use('/api/campaigns', campaignRoutes);
 app.use('/api/letters', letterRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/leads', leadRoutes);
+app.use('/api/office365', office365Routes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

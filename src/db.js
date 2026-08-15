@@ -151,10 +151,32 @@ function addColumn(table, column, spec) {
 addColumn('senders', 'kind', "TEXT NOT NULL DEFAULT 'smtp'");
 addColumn('senders', 'provider', "TEXT NOT NULL DEFAULT ''");
 addColumn('senders', 'sms_gateway', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'office_tenant_id', 'INTEGER');
+addColumn('senders', 'auth_mode', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'company', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom1', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom2', "TEXT NOT NULL DEFAULT ''");
 addColumn('campaigns', 'channel', "TEXT NOT NULL DEFAULT 'email'");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS office_tenants (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label            TEXT NOT NULL,
+  tenant_id        TEXT NOT NULL DEFAULT '',
+  tenant_domain    TEXT NOT NULL DEFAULT '',
+  client_id        TEXT NOT NULL DEFAULT '',
+  client_secret    TEXT NOT NULL DEFAULT '',
+  send_mode        TEXT NOT NULL DEFAULT 'graph',
+  default_mailbox  TEXT NOT NULL DEFAULT '',
+  from_name        TEXT NOT NULL DEFAULT '',
+  org_name         TEXT NOT NULL DEFAULT '',
+  verified         INTEGER NOT NULL DEFAULT 0,
+  token_cache      TEXT NOT NULL DEFAULT '',
+  token_expires    TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
 
 export default db;

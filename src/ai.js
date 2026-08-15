@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { generateLetter, LETTER_KINDS } from './letters.js';
 import { htmlToText } from './placeholders.js';
+import { OFFICE_SETUP, GRAPH_PERMISSIONS, OFFICE_SMTP } from './office365.js';
 
 const SYSTEM = `You are a writing assistant inside a permission-based email platform.
 You help the user write transactional and opted-in campaign mail for THEIR own organization.
@@ -51,6 +52,33 @@ function localHelp({ action, prompt, subject, html, text, language }) {
     notes.push(
       'No AI API key is configured. Local help can generate letters and tidy subjects; set OPENAI_API_KEY for full rewrite/translate.'
     );
+  }
+
+  if (action === 'office_setup') {
+    const notes = [
+      'Office 365 tenant send uses YOUR Entra app and YOUR mailboxes.',
+      'Graph (recommended): application permission Mail.Send + admin consent.',
+      `SMTP AUTH: ${OFFICE_SMTP.host}:${OFFICE_SMTP.port} STARTTLS, enabled per mailbox.`,
+      ...OFFICE_SETUP.entra.map((s, i) => `Entra ${i + 1}. ${s}`),
+      ...OFFICE_SETUP.smtp.map((s, i) => `SMTP ${i + 1}. ${s}`),
+      'Permissions: ' + GRAPH_PERMISSIONS.map((p) => `${p.id}${p.required ? ' (required)' : ''}`).join(', '),
+    ];
+    return { subject, html, text, notes };
+  }
+
+  if (action === 'office_tone') {
+    notes.push(
+      'Write as the tenant organization ({{company}}), not as Microsoft. Keep {{first_name}} placeholders. No password or MFA prompts.'
+    );
+    if (prompt && html) {
+      return {
+        subject: subject || 'Message from {{company}}',
+        html,
+        text: text || htmlToText(html),
+        notes,
+      };
+    }
+    return { subject, html, text, notes };
   }
 
   if (action === 'placeholders') {
@@ -109,6 +137,10 @@ export async function runAi({
   }
 
   if (!aiEnabled()) return localHelp({ action, prompt, subject, html, text, language });
+
+  if (action === 'office_setup') {
+    return localHelp({ action, prompt, subject, html, text, language });
+  }
 
   const user = {
     action,
