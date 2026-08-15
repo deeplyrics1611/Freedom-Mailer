@@ -602,7 +602,8 @@ pre {
 .feat-toggle { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
 .feat-toggle input { width: auto; }
 .feat-toggle.locked { opacity: .55; }
-.client-actions { margin-top: 8px; }
+.sender-pick { display: flex; gap: 8px; align-items: center; }
+.sender-pick select { flex: 1; min-width: 0; }
 .admin-toolbar {
   display: flex;
   justify-content: space-between;

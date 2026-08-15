@@ -5,6 +5,7 @@ import { requireAuth, requireFeature } from '../auth.js';
 import { isSuppressed, withUnsubscribeFooter, renderTemplate, newToken } from '../compliance.js';
 import { parseLeads, toSmsAddress } from '../leads.js';
 import { expandVars } from '../placeholders.js';
+import { verifyTransport } from '../mailer.js';
 
 const router = Router();
 router.use(requireAuth, requireFeature('campaigns'));
@@ -137,16 +138,34 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-function resolveSender(userId, senderId) {
-  const sender = senderId
-    ? db.prepare('SELECT * FROM senders WHERE id = ? AND user_id = ?').get(senderId, userId)
-    : null;
+async function resolveSender(userId, senderId) {
+  const id = senderId ? parseInt(senderId, 10) : 0;
+  const sender = id
+    ? db.prepare('SELECT * FROM senders WHERE id = ? AND user_id = ?').get(id, userId)
+    : db
+        .prepare(
+          `SELECT * FROM senders WHERE user_id = ?
+           ORDER BY verified DESC, id DESC LIMIT 1`
+        )
+        .get(userId);
   if (senderId && !sender) throw Object.assign(new Error('Sender not found'), { status: 400 });
   if (sender && !sender.verified) {
-    throw Object.assign(new Error('Sender identity must be verified before sending'), { status: 400 });
+    try {
+      await Promise.race([
+        verifyTransport(sender),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Verify timed out')), 12000)),
+      ]);
+      db.prepare('UPDATE senders SET verified = 1 WHERE id = ?').run(sender.id);
+      sender.verified = 1;
+    } catch (e) {
+      throw Object.assign(
+        new Error(`Sender could not be verified: ${e.message}. Open Senders and click Verify.`),
+        { status: 400 }
+      );
+    }
   }
   if (!sender && !config.systemSmtp.host) {
-    throw Object.assign(new Error('No verified sender and no system SMTP configured'), { status: 400 });
+    throw Object.assign(new Error('Add a sender under Senders, then pick it in Compose.'), { status: 400 });
   }
   return sender;
 }
@@ -214,7 +233,7 @@ function enqueueCampaign(user, campaign, recipients, sender) {
   return { queued, skipped, eligible: recipients.length };
 }
 
-router.post('/:id/send', (req, res) => {
+router.post('/:id/send', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const c = db.prepare('SELECT * FROM campaigns WHERE id = ? AND user_id = ?').get(id, req.user.id);
   if (!c) return res.status(404).json({ error: 'Not found' });
@@ -223,7 +242,7 @@ router.post('/:id/send', (req, res) => {
   if (!c.subject && c.channel !== 'smtp_sms') return res.status(400).json({ error: 'Campaign needs a subject' });
 
   try {
-    const sender = resolveSender(req.user.id, c.sender_id);
+    const sender = await resolveSender(req.user.id, c.sender_id);
     const statusFilter = config.requireDoubleOptIn ? "'confirmed'" : "'confirmed','pending'";
     const recipients = db
       .prepare(
@@ -240,7 +259,7 @@ router.post('/:id/send', (req, res) => {
 });
 
 // Paste leads + compose + send in one step (no file import).
-router.post('/compose', (req, res) => {
+router.post('/compose', async (req, res) => {
   const {
     name,
     sender_id,
@@ -272,7 +291,7 @@ router.post('/compose', (req, res) => {
   }
 
   try {
-    const sender = resolveSender(req.user.id, sender_id);
+    const sender = await resolveSender(req.user.id, sender_id);
     const smsMode = sender?.kind === 'smtp_sms' || channel === 'smtp_sms';
     if (smsMode && parsed.leads.some((l) => !l.phone)) {
       return res.status(400).json({
@@ -298,7 +317,7 @@ router.post('/compose', (req, res) => {
       .run(
         req.user.id,
         name || subject || 'Compose send',
-        sender_id || null,
+        sender?.id || sender_id || null,
         listId,
         subject,
         html,

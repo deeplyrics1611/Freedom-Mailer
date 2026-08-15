@@ -20,6 +20,8 @@ export function transportForSender(sender) {
       secure: !!sender.secure,
       requireTLS:
         sender.host === 'smtp.office365.com' ||
+        sender.host === 'smtp.gmail.com' ||
+        sender.host === 'smtp-relay.gmail.com' ||
         (sender.kind === 'aws' && String(sender.host || '').includes('email-smtp.')),
     };
     if (sender.username && sender.password) {

@@ -52,6 +52,11 @@ export const SENDER_KINDS = [
     label: 'AWS SES',
     blurb: 'Amazon SES in your AWS account — SMTP credentials or SigV4 HTTP API.',
   },
+  {
+    id: 'gcp',
+    label: 'Google Cloud (us-east4)',
+    blurb: 'Google Workspace SMTP relay from Google Cloud us-east4 (smtp-relay.gmail.com), or Gmail SMTP with an app password.',
+  },
 ];
 
 export const SMTP_PRESETS = [
@@ -308,6 +313,39 @@ export const SMTP_PRESETS = [
     secure: true,
     hint: 'IAM access key + secret with ses:SendEmail. Username = Access key ID. From address must be a verified SES identity in that region.',
   },
+  {
+    id: 'gcp-relay',
+    kind: 'gcp',
+    auth_mode: 'smtp',
+    label: 'Google Cloud (us-east4)',
+    host: 'smtp-relay.gmail.com',
+    port: 587,
+    secure: false,
+    region: 'us-east4',
+    hint: 'Workspace SMTP relay. From address must be in your Google Workspace domain. Auth is optional if this machine’s IP is allowlisted in Apps → Gmail → SMTP relay (typical on GCE us-east4). Otherwise use the Google account + app password.',
+  },
+  {
+    id: 'gcp-relay-ssl',
+    kind: 'gcp',
+    auth_mode: 'smtp',
+    label: 'Google Cloud relay (465)',
+    host: 'smtp-relay.gmail.com',
+    port: 465,
+    secure: true,
+    region: 'us-east4',
+    hint: 'Same SMTP relay over implicit TLS. Use when 587 is blocked. IP allowlist or Google username + app password.',
+  },
+  {
+    id: 'gcp-gmail',
+    kind: 'gcp',
+    auth_mode: 'smtp',
+    label: 'Gmail SMTP (app password)',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    region: 'us-east4',
+    hint: 'smtp.gmail.com. Username is the full Gmail / Workspace address. Password must be a Google App Password, not the account password.',
+  },
 ];
 
 export const SMS_GATEWAYS = [
@@ -323,6 +361,17 @@ export const SMS_GATEWAYS = [
 export const MAILGUN_REGIONS = [
   { id: 'us', label: 'US — smtp.mailgun.org / api.mailgun.net', smtpHost: 'smtp.mailgun.org', apiHost: 'api.mailgun.net' },
   { id: 'eu', label: 'EU — smtp.eu.mailgun.org / api.eu.mailgun.net', smtpHost: 'smtp.eu.mailgun.org', apiHost: 'api.eu.mailgun.net' },
+];
+
+export const GCP_REGIONS = [
+  { id: 'us-east4', label: 'us-east4 (N. Virginia)' },
+  { id: 'us-east1', label: 'us-east1 (South Carolina)' },
+  { id: 'us-central1', label: 'us-central1 (Iowa)' },
+  { id: 'us-west1', label: 'us-west1 (Oregon)' },
+  { id: 'europe-west1', label: 'europe-west1 (Belgium)' },
+  { id: 'europe-west2', label: 'europe-west2 (London)' },
+  { id: 'asia-northeast1', label: 'asia-northeast1 (Tokyo)' },
+  { id: 'asia-southeast1', label: 'asia-southeast1 (Singapore)' },
 ];
 
 export const AWS_SES_REGIONS = [
@@ -405,6 +454,13 @@ export function applyProviderDefaults({ kind, auth_mode = '', region = '', host 
       portVal = portVal || 587;
       secureVal = Number(portVal) === 465;
     }
+  }
+
+  if (kind === 'gcp') {
+    regionVal = regionVal || 'us-east4';
+    hostVal = hostVal || 'smtp-relay.gmail.com';
+    portVal = portVal || 587;
+    if (secureVal === undefined) secureVal = Number(portVal) === 465;
   }
 
   if (kind === 'postfix') {

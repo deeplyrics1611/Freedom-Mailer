@@ -8,6 +8,7 @@ import {
   SMS_GATEWAYS,
   MAILGUN_REGIONS,
   AWS_SES_REGIONS,
+  GCP_REGIONS,
   presetById,
   applyProviderDefaults,
 } from '../presets.js';
@@ -25,6 +26,7 @@ router.get('/presets', (req, res) => {
     sms_gateways: SMS_GATEWAYS,
     mailgun_regions: MAILGUN_REGIONS,
     aws_regions: AWS_SES_REGIONS,
+    gcp_regions: GCP_REGIONS,
   });
 });
 
@@ -44,8 +46,8 @@ function validateSender({ kindVal, auth_mode, hostVal, username, password, label
   if (kindVal === 'office365' && (auth_mode === 'graph' || !password)) {
     return null;
   }
-  if (kindVal === 'postfix') {
-    if (!hostVal) return 'host is required for Postfix';
+  if (kindVal === 'postfix' || kindVal === 'gcp') {
+    if (!hostVal) return kindVal === 'gcp' ? 'host is required for Google Cloud SMTP' : 'host is required for Postfix';
     return null;
   }
   if (kindVal === 'mailgun' && auth_mode === 'api') {
@@ -71,7 +73,7 @@ function validateSender({ kindVal, auth_mode, hostVal, username, password, label
   return null;
 }
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const {
     label,
     kind = 'smtp',
@@ -150,19 +152,32 @@ router.post('/', (req, res) => {
       label,
       kindVal,
       providerVal,
-      hostVal || 'smtp.office365.com',
+      hostVal || (kindVal === 'gcp' ? 'smtp-relay.gmail.com' : 'smtp.office365.com'),
       portVal,
       secureVal ? 1 : 0,
-      kindVal === 'postfix' ? (userVal || '') : (userVal || from_email || ''),
+      kindVal === 'postfix' || kindVal === 'gcp' ? (userVal || '') : (userVal || from_email || ''),
       password || (kindVal === 'office365' ? 'graph' : ''),
       from_name || label,
       from_email,
       sms_gateway,
       office_tenant_id || null,
-      modeVal || (kindVal === 'office365' ? 'graph' : ''),
-      regionVal || ''
+      modeVal || (kindVal === 'office365' ? 'graph' : kindVal === 'gcp' ? 'smtp' : ''),
+      regionVal || (kindVal === 'gcp' ? 'us-east4' : '')
     );
-  res.status(201).json({ id: info.lastInsertRowid });
+  const sender = db.prepare('SELECT * FROM senders WHERE id = ?').get(info.lastInsertRowid);
+  let verified = false;
+  let verify_error = '';
+  try {
+    await Promise.race([
+      verifyTransport(sender),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Verify timed out')), 12000)),
+    ]);
+    db.prepare('UPDATE senders SET verified = 1 WHERE id = ?').run(sender.id);
+    verified = true;
+  } catch (e) {
+    verify_error = String(e.message || e);
+  }
+  res.status(201).json({ id: sender.id, verified, verify_error });
 });
 
 router.post('/:id/verify', async (req, res) => {

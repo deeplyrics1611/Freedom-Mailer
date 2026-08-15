@@ -157,7 +157,7 @@ const badge = (status) => {
     sending: 'warn', draft: 'muted', failed: 'err', skipped: 'muted', unsubscribed: 'muted',
     smtp: 'muted', ovh: 'ok', webmail: 'warn', japan: 'ok', smtp_sms: 'warn',
     office365: 'ok', graph: 'ok', smtp_auth: 'warn',
-    mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', api: 'ok',
+    mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', gcp: 'ok', api: 'ok',
     '3day': 'warn', monthly: 'ok', lifetime: 'ok', expired: 'err',
     undeliverable: 'err', unknown: 'warn', drop: 'err', invalid: 'err',
   };
@@ -503,6 +503,29 @@ not-an-email"></textarea>
   });
 };
 
+function senderOption(s) {
+  const region = s.region ? ` · ${esc(s.region)}` : '';
+  const status = s.verified ? '' : ' (unverified)';
+  return `<option value="${s.id}" data-kind="${esc(s.kind)}">${esc(s.label)}${region} · ${esc(s.kind)}${status}</option>`;
+}
+
+async function fillSenderSelect(id, preferred) {
+  const el = $(id);
+  if (!el) return [];
+  const current = preferred || el.value;
+  const senders = await api('/api/senders');
+  if (!senders.length) {
+    el.innerHTML = '<option value="">No senders yet — add one under Senders</option>';
+    return senders;
+  }
+  el.innerHTML = senders.map(senderOption).join('');
+  const ids = new Set(senders.map((s) => String(s.id)));
+  const verified = senders.filter((s) => s.verified);
+  const pick = ids.has(String(current)) ? current : String(verified[0]?.id || senders[0].id);
+  el.value = pick;
+  return senders;
+}
+
 views.compose = async () => {
   const [senders, letters, ai, lists] = await Promise.all([
     api('/api/senders'),
@@ -510,20 +533,19 @@ views.compose = async () => {
     api('/api/ai/status'),
     api('/api/lists'),
   ]);
-  const verified = senders.filter((s) => s.verified);
   view(`<div class="page-head"><h1>Compose &amp; send</h1></div>
-    <p class="sub">Paste recipients, pick a letter, merge placeholders, then queue the send from a verified identity you own.</p>
+    <p class="sub">Paste recipients, pick a letter, merge placeholders, then queue the send from a sender you own. New senders show up here immediately — click Refresh if you just added one.</p>
     <div class="compose">
       <div>
         <form id="compose-form">
           <div class="form-grid">
             <div class="field"><label>Campaign name</label><input id="c-name" placeholder="August invoice batch"></div>
             <div class="field"><label>Sender</label>
-              <select id="c-sender">
-                <option value="">— system default —</option>
-                ${verified.map((s) => `<option value="${s.id}" data-kind="${esc(s.kind)}">${esc(s.label)} · ${esc(s.kind)}</option>`).join('')}
-                ${senders.filter((s) => !s.verified).map((s) => `<option value="" disabled>${esc(s.label)} (unverified)</option>`).join('')}
-              </select>
+              <div class="sender-pick">
+                <select id="c-sender"></select>
+                <button type="button" class="secondary tiny" id="c-sender-refresh">Refresh</button>
+              </div>
+              <p class="muted small" id="c-sender-hint"></p>
             </div>
             <div class="field full"><label>Subject</label><input id="c-subject" placeholder="Invoice {{invoice_number}} for {{company}}"></div>
           </div>
@@ -601,6 +623,19 @@ Jane Doe <jane@example.com>"></textarea>
         <iframe id="pv-frame" class="preview-frame" sandbox="allow-same-origin" title="Email preview"></iframe>
       </div>
     </div>`);
+
+  await fillSenderSelect('c-sender');
+  $('c-sender-hint').textContent = senders.length
+    ? `${senders.length} sender(s). Pick one — unverified identities are checked when you queue.`
+    : 'Add a sender under Senders, then click Refresh.';
+  $('c-sender-refresh').addEventListener('click', async () => {
+    try {
+      const rows = await fillSenderSelect('c-sender');
+      $('c-sender-hint').textContent = rows.length ? `${rows.length} sender(s) loaded.` : 'No senders yet.';
+      toast(rows.length ? `Loaded ${rows.length} sender(s)` : 'No senders yet');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  $('c-sender').addEventListener('focus', () => { fillSenderSelect('c-sender').catch(() => {}); });
 
   let selectedKind = '';
   const letterMap = Object.fromEntries(letters.letters.map((l) => [l.id, l]));
@@ -730,7 +765,7 @@ Jane Doe <jane@example.com>"></textarea>
         method: 'POST',
         body: {
           name: $('c-name').value || $('c-subject').value,
-          sender_id: $('c-sender').value || null,
+          sender_id: $('c-sender').value ? parseInt($('c-sender').value, 10) : null,
           subject: $('c-subject').value,
           html: $('c-html').value,
           text: $('c-text').value,
@@ -982,10 +1017,10 @@ views.office365 = async () => {
 views.senders = async () => {
   const presets = await api('/api/senders/presets');
   const apiKinds = new Set(['mailgun', 'sendgrid', 'aws']);
-  const regionKinds = new Set(['mailgun', 'aws']);
+  const regionKinds = new Set(['mailgun', 'aws', 'gcp']);
   view(`<div class="page-head"><h1>Senders</h1></div>
-    <p class="sub">Mailboxes and ESP accounts you own: SMTP, Mailgun, SendGrid, Postfix, AWS SES, OVH, webmail, Japan hosts. Credentials stay on this server.</p>
-    <div class="notice">Microsoft 365 tenant (Graph app + SMTP AUTH) lives under <a data-go="office365">Office 365</a>. Mailgun / SendGrid / AWS send through <b>your</b> verified domain or identity — not a shared relay.</div>
+    <p class="sub">Mailboxes and ESP accounts you own: SMTP, Google Cloud (us-east4), Mailgun, SendGrid, Postfix, AWS SES, OVH, webmail, Japan hosts. Credentials stay on this server.</p>
+    <div class="notice">Microsoft 365 tenant (Graph app + SMTP AUTH) lives under <a data-go="office365">Office 365</a>. Google Cloud uses <b>smtp-relay.gmail.com</b> in us-east4 (or Gmail SMTP). Mailgun / SendGrid / AWS send through <b>your</b> verified domain — not a shared relay.</div>
     <div class="kind-tabs" id="kind-tabs">
       ${presets.kinds.map((k) => `<button type="button" data-kind="${k.id}">${esc(k.label)}</button>`).join('')}
     </div>
@@ -1034,6 +1069,9 @@ views.senders = async () => {
       sel.innerHTML = (presets.mailgun_regions || []).map((r) => `<option value="${esc(r.id)}">${esc(r.label)}</option>`).join('');
     } else if (kind === 'aws') {
       sel.innerHTML = (presets.aws_regions || []).map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+    } else if (kind === 'gcp') {
+      sel.innerHTML = (presets.gcp_regions || []).map((r) => `<option value="${esc(r.id)}">${esc(r.label)}</option>`).join('');
+      sel.value = 'us-east4';
     } else {
       sel.innerHTML = '';
     }
@@ -1067,9 +1105,10 @@ views.senders = async () => {
     const mode = $('s-auth').value;
     const isApi = apiKinds.has(kind) && mode === 'api';
     const isPostfix = kind === 'postfix';
+    const authOptional = isPostfix || kind === 'gcp';
     $('s-host').required = !isApi && kind !== 'office365';
-    $('s-user').required = !isPostfix && !(kind === 'sendgrid' && isApi);
-    $('s-pass').required = !isPostfix;
+    $('s-user').required = !authOptional && !(kind === 'sendgrid' && isApi);
+    $('s-pass').required = !authOptional;
     $('s-host-wrap').classList.toggle('hidden', isApi);
     $('s-port-wrap').classList.toggle('hidden', isApi);
     $('s-secure-wrap').classList.toggle('hidden', isApi);
@@ -1079,6 +1118,12 @@ views.senders = async () => {
       $('s-user').placeholder = 'leave blank if IP-allowlisted';
       $('s-host-label').textContent = 'Postfix host';
       $('s-host').placeholder = 'mail.yourdomain.com';
+    } else if (kind === 'gcp') {
+      $('s-user-label').textContent = 'Username (optional if IP allowlisted)';
+      $('s-pass-label').textContent = 'App password (optional if IP allowlisted)';
+      $('s-user').placeholder = 'you@yourdomain.com';
+      $('s-host-label').textContent = 'SMTP host';
+      $('s-host').placeholder = 'smtp-relay.gmail.com';
     } else if (kind === 'mailgun' && isApi) {
       $('s-user-label').textContent = 'Sending domain';
       $('s-pass-label').textContent = 'Mailgun API key';
@@ -1128,6 +1173,11 @@ views.senders = async () => {
     $('s-region-wrap').classList.toggle('hidden', !regionKinds.has(kind));
     fillRegions();
     applyPreset();
+    const label = document.querySelector('#sender-form [name=label]');
+    if (kind === 'gcp' && label && !label.value) {
+      label.placeholder = 'Google Cloud (us-east4)';
+      label.value = 'Google Cloud (us-east4)';
+    }
   }
 
   function applyPreset() {
@@ -1164,7 +1214,13 @@ views.senders = async () => {
     e.preventDefault();
     const f = e.target; const b = Object.fromEntries(new FormData(f));
     b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10) || (b.auth_mode === 'api' ? 443 : 587);
-    try { await api('/api/senders', { method: 'POST', body: b }); f.reset(); toast('Sender added'); views.senders(); }
+    try {
+      const created = await api('/api/senders', { method: 'POST', body: b });
+      f.reset();
+      if (created.verified) toast('Sender added and verified — pick it in Compose');
+      else toast(created.verify_error ? `Saved. Verify failed: ${created.verify_error}` : 'Sender added — click Verify, then Compose');
+      views.senders();
+    }
     catch (err) { toast(err.message, 'err'); }
   });
   const rows = await api('/api/senders');
@@ -1341,10 +1397,7 @@ views.campaigns = async () => {
     <form id="camp-form" class="form-grid">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Subject</label><input name="subject" required></div>
-      <div class="field"><label>Sender identity</label><select name="sender_id">
-        <option value="">— system default —</option>
-        ${senders.map((s) => `<option value="${s.id}" ${s.verified ? '' : 'disabled'}>${esc(s.label)}${s.verified ? '' : ' (unverified)'}</option>`).join('')}
-      </select></div>
+      <div class="field"><label>Sender identity</label><select name="sender_id" id="camp-sender"></select></div>
       <div class="field"><label>List</label><select name="list_id" required>
         <option value="">— choose —</option>
         ${lists.map((l) => `<option value="${l.id}">${esc(l.name)} (${l.confirmed} confirmed)</option>`).join('')}
@@ -1359,6 +1412,7 @@ views.campaigns = async () => {
       <div class="actions full"><button type="submit">Save draft</button></div>
     </form>
     <table id="camp-table"></table>`);
+  await fillSenderSelect('camp-sender');
   $('to-compose').addEventListener('click', () => go('compose'));
   $('tpl-pick').addEventListener('change', () => {
     const t = tpls.find((x) => String(x.id) === $('tpl-pick').value);

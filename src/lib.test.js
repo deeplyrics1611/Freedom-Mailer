@@ -173,9 +173,9 @@ describe('links', () => {
 });
 
 describe('presets', () => {
-  it('covers smtp, ovh, webmail, japan, smtp_sms, office365, mailgun, sendgrid, postfix, aws', () => {
+  it('covers smtp, ovh, webmail, japan, smtp_sms, office365, mailgun, sendgrid, postfix, aws, gcp', () => {
     const kinds = new Set(SENDER_KINDS.map((k) => k.id));
-    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms', 'office365', 'mailgun', 'sendgrid', 'postfix', 'aws']) {
+    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms', 'office365', 'mailgun', 'sendgrid', 'postfix', 'aws', 'gcp']) {
       assert.ok(kinds.has(id), id);
     }
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.mail.ovh.net'));
@@ -185,6 +185,8 @@ describe('presets', () => {
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.sendgrid.net'));
     assert.ok(SMTP_PRESETS.some((p) => p.kind === 'postfix'));
     assert.ok(SMTP_PRESETS.some((p) => p.host.includes('email-smtp.')));
+    assert.ok(SMTP_PRESETS.some((p) => p.id === 'gcp-relay' && p.host === 'smtp-relay.gmail.com'));
+    assert.equal(SENDER_KINDS.find((k) => k.id === 'gcp').label, 'Google Cloud (us-east4)');
   });
 
   it('fills Mailgun / SendGrid / AWS hosts from region and mode', () => {
@@ -196,6 +198,10 @@ describe('presets', () => {
     const sg = applyProviderDefaults({ kind: 'sendgrid', auth_mode: 'smtp' });
     assert.equal(sg.username, 'apikey');
     assert.equal(sg.host, 'smtp.sendgrid.net');
+    const gcp = applyProviderDefaults({ kind: 'gcp' });
+    assert.equal(gcp.host, 'smtp-relay.gmail.com');
+    assert.equal(gcp.region, 'us-east4');
+    assert.equal(gcp.port, 587);
   });
 });
 
