@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { suppress } from '../compliance.js';
+import { classifyClient, landingHtml } from '../links.js';
 
 // Public, unauthenticated compliance endpoints: double opt-in confirmation
 // and one-click unsubscribe. Both are keyed by an unguessable token.
@@ -47,9 +48,37 @@ function handleUnsubscribe(sub) {
   db.prepare(
     "UPDATE subscriptions SET status = 'unsubscribed', unsubscribed_at = datetime('now') WHERE id = ?"
   ).run(sub.id);
-  // Add to the owner's suppression list so future campaigns skip them too.
   const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(sub.contact_id);
   if (contact) suppress(contact.user_id, contact.email, 'unsubscribe');
 }
+
+// GET /l/:code — branded short link. Same destination for every visitor
+// (including Safe Links / crawlers). Bots are counted, not sent elsewhere.
+router.get('/l/:code', (req, res) => {
+  const link = db.prepare('SELECT * FROM short_links WHERE code = ? AND active = 1').get(req.params.code);
+  if (!link) return res.status(404).send(page('Link not found', 'This tracking link is invalid or has been disabled.'));
+
+  const ua = req.headers['user-agent'] || '';
+  const { kind, marker } = classifyClient(ua);
+  db.prepare(
+    `INSERT INTO link_clicks (link_id, kind, marker) VALUES (?, ?, ?)`
+  ).run(link.id, kind, marker);
+  db.prepare(
+    `UPDATE short_links SET
+       clicks = clicks + 1,
+       bot_hits = bot_hits + CASE WHEN ? = 'bot' THEN 1 ELSE 0 END,
+       human_hits = human_hits + CASE WHEN ? = 'human' THEN 1 ELSE 0 END
+     WHERE id = ?`
+  ).run(kind, kind, link.id);
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (link.mode === 'landing') {
+    return res
+      .type('html')
+      .send(landingHtml({ title: link.title || link.label, destination: link.destination, continueUrl: link.destination }));
+  }
+  return res.redirect(302, link.destination);
+});
 
 export default router;

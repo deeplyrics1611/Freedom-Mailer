@@ -42,6 +42,7 @@ const NAV = [
   ['compose', '✍️ Compose'],
   ['dashboard', '📊 Dashboard'],
   ['office365', '🏢 Office 365'],
+  ['links', '🔗 Links'],
   ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
@@ -107,9 +108,119 @@ views.dashboard = async () => {
     card(s.sent, 'Messages sent'), card(s.queued, 'In queue'),
     card(s.failed, 'Failed'),     card(s.suppressed, 'Suppressed'),
     card(s.office_tenants || 0, 'Office 365 tenants'),
+    card(s.short_links || 0, 'Tracking links'),
     card(s.sms_enabled ? 'On' : 'Off', 'Twilio SMS'),
     card(s.ai_enabled ? 'On' : 'Local', 'AI help'),
   ].join('');
+};
+
+views.links = async () => {
+  view(`<div class="page-head"><h1>Tracking links</h1></div>
+    <p class="sub">Branded short URLs on <b>your</b> app host for landing pages in email. Every visitor — including Safe Links and crawlers — is sent to the <b>same</b> destination. Bots are logged, not shown a fake page.</p>
+    <div class="notice">Serving a clean page to scanners and a different offer to humans is how spam filters catch you. This shortener does not do that.</div>
+
+    <div class="kind-tabs" id="link-tabs">
+      <button type="button" class="active" data-tab="shorten">Shorten</button>
+      <button type="button" data-tab="validate">Validate for email</button>
+    </div>
+
+    <section data-lpane="shorten">
+      <form id="link-form" class="form-grid">
+        <div class="field full"><label>Destination URL</label><input name="destination" required placeholder="https://yourcompany.com/offer"></div>
+        <div class="field"><label>Label</label><input name="label" placeholder="August CTA"></div>
+        <div class="field"><label>When clicked</label>
+          <select name="mode">
+            <option value="redirect">Redirect immediately (302)</option>
+            <option value="landing">Show a landing page, then continue</option>
+          </select>
+        </div>
+        <div class="field full"><label>Landing title (landing mode)</label><input name="title" placeholder="Continue to our site"></div>
+        <div class="actions full"><button type="submit">Create short link</button></div>
+      </form>
+      <div id="link-created" class="notice hidden"></div>
+      <table id="link-table"></table>
+      <div id="link-clicks"></div>
+    </section>
+
+    <section data-lpane="validate" class="hidden">
+      <p class="muted small">Checks HTTPS, impersonation lookalikes, public shorteners, private/IP hosts, and whether the destination actually loads. Paste a URL or a letter’s HTML.</p>
+      <form id="val-form">
+        <div class="field"><label>URL</label><input id="val-url" placeholder="https://yourcompany.com/pricing"></div>
+        <div class="field" style="margin-top:10px"><label>Or HTML to scan</label><textarea id="val-html" rows="6" placeholder="<a href=&quot;https://…&quot;>"></textarea></div>
+        <div class="actions" style="margin-top:10px"><button type="submit">Check</button></div>
+      </form>
+      <div id="val-out" style="margin-top:14px"></div>
+    </section>`);
+
+  const panes = [...document.querySelectorAll('[data-lpane]')];
+  $('link-tabs').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    $('link-tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+    panes.forEach((p) => p.classList.toggle('hidden', p.dataset.lpane !== b.dataset.tab));
+  }));
+
+  function verdictBadge(v) {
+    if (v === 'ok') return badge('verified');
+    if (v === 'risky') return badge('pending');
+    return badge('failed');
+  }
+
+  async function loadLinks() {
+    const rows = await api('/api/links');
+    $('link-table').innerHTML = `<tr><th>Short</th><th>Destination</th><th>Mode</th><th>Score</th><th>Clicks</th><th></th></tr>` +
+      (rows.map((r) => `<tr>
+        <td class="mono small"><a href="${esc(r.short_url)}" target="_blank" rel="noopener">${esc(r.short_url)}</a>
+          <div class="muted">${esc(r.label)}</div></td>
+        <td class="small">${esc(r.destination)}</td>
+        <td>${esc(r.mode)}</td>
+        <td>${r.last_verdict ? verdictBadge(r.last_verdict) : '—'} ${r.last_score || ''}</td>
+        <td>${r.clicks} <span class="muted small">(${r.human_hits} people / ${r.bot_hits} bots)</span></td>
+        <td><button class="tiny secondary" data-c="${r.id}">Clicks</button>
+            <button class="tiny danger" data-d="${r.id}">Delete</button></td></tr>`).join('')
+        || `<tr><td colspan="6" class="muted">No links yet.</td></tr>`);
+    $('link-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
+      await api(`/api/links/${b.dataset.d}`, { method: 'DELETE' }); loadLinks();
+    }));
+    $('link-table').querySelectorAll('[data-c]').forEach((b) => b.addEventListener('click', async () => {
+      const data = await api(`/api/links/${b.dataset.c}/clicks`);
+      $('link-clicks').innerHTML = `<h2>Recent hits</h2><table><tr><th>When</th><th>Kind</th><th>Marker</th></tr>` +
+        (data.clicks.map((c) => `<tr><td class="muted small">${esc(c.created_at)}</td><td>${badge(c.kind === 'bot' ? 'pending' : 'confirmed')} ${esc(c.kind)}</td><td class="mono small">${esc(c.marker || '—')}</td></tr>`).join('')
+          || `<tr><td colspan="3" class="muted">No clicks yet.</td></tr>`) + `</table>`;
+    }));
+  }
+
+  $('link-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    try {
+      const r = await api('/api/links', { method: 'POST', body: b });
+      const box = $('link-created');
+      box.classList.remove('hidden');
+      box.innerHTML = `Use this in your letter: <code>${esc(r.short_url)}</code>
+        ${r.report?.verdict === 'risky' ? `<div class="muted">Created with warnings: ${(r.report.warnings || []).join(' ')}</div>` : ''}`;
+      e.target.reset();
+      loadLinks();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  $('val-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('val-out').textContent = 'Checking…';
+    try {
+      const body = { url: $('val-url').value, html: $('val-html').value };
+      const r = await api('/api/links/validate', { method: 'POST', body });
+      const reports = r.reports || [r];
+      $('val-out').innerHTML = reports.map((rep) => `
+        <div class="card" style="margin-bottom:10px">
+          <div><b>${esc(rep.host || rep.url || '')}</b> ${verdictBadge(rep.verdict)} score ${rep.score}</div>
+          <div class="muted small">${esc(rep.url || '')}</div>
+          ${(rep.issues || []).map((i) => `<div class="error">${esc(i)}</div>`).join('')}
+          ${(rep.warnings || []).map((w) => `<div class="muted small">⚠ ${esc(w)}</div>`).join('')}
+          ${(rep.hops || []).length ? `<div class="muted small">Hops: ${rep.hops.map((h) => esc(String(h.status))).join(' → ')}</div>` : ''}
+        </div>`).join('') || '<div class="muted">No URLs found.</div>';
+    } catch (err) { $('val-out').textContent = ''; toast(err.message, 'err'); }
+  });
+
+  loadLinks().catch((e) => toast(e.message, 'err'));
 };
 
 views.compose = async () => {
@@ -200,6 +311,7 @@ Jane Doe <jane@example.com>"></textarea>
             <button type="submit">Queue send</button>
             <button type="button" class="secondary" id="c-save-tpl">Save as template</button>
             <button type="button" class="secondary" id="c-preview-btn">Refresh preview</button>
+            <button type="button" class="secondary" id="c-wrap-links">Shorten URLs in HTML</button>
           </div>
         </form>
       </div>
@@ -285,6 +397,14 @@ Jane Doe <jane@example.com>"></textarea>
     $('pv-frame').srcdoc = r.html || '<p style="font-family:sans-serif;color:#888;padding:24px">Nothing to preview yet.</p>';
   }
   $('c-preview-btn').addEventListener('click', () => refreshPreview().catch((e) => toast(e.message, 'err')));
+  $('c-wrap-links').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/links/wrap-html', { method: 'POST', body: { html: $('c-html').value, mode: 'redirect' } });
+      $('c-html').value = r.html;
+      toast(`Wrapped ${r.created.length} link(s)`);
+      refreshPreview();
+    } catch (err) { toast(err.message, 'err'); }
+  });
   ['c-subject', 'c-html'].forEach((id) => $(id).addEventListener('change', () => refreshPreview().catch(() => {})));
 
   $('ai-run').addEventListener('click', async () => {

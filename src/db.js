@@ -177,6 +177,35 @@ CREATE TABLE IF NOT EXISTS office_tenants (
   token_expires    TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS short_links (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label         TEXT NOT NULL DEFAULT '',
+  code          TEXT UNIQUE NOT NULL,
+  destination   TEXT NOT NULL,
+  mode          TEXT NOT NULL DEFAULT 'redirect',
+  title         TEXT NOT NULL DEFAULT '',
+  clicks        INTEGER NOT NULL DEFAULT 0,
+  bot_hits      INTEGER NOT NULL DEFAULT 0,
+  human_hits    INTEGER NOT NULL DEFAULT 0,
+  last_score    INTEGER NOT NULL DEFAULT 0,
+  last_verdict  TEXT NOT NULL DEFAULT '',
+  last_checked  TEXT,
+  active        INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS link_clicks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  link_id     INTEGER NOT NULL REFERENCES short_links(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL DEFAULT 'human',
+  marker      TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_short_code ON short_links(code);
+CREATE INDEX IF NOT EXISTS idx_clicks_link ON link_clicks(link_id, created_at);
 `);
 
 export default db;

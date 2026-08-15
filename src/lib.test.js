@@ -11,6 +11,7 @@ import {
   OFFICE_SMTP,
   GRAPH_PERMISSIONS,
 } from './office365.js';
+import { staticValidate, classifyClient, extractUrls } from './links.js';
 
 describe('parseLeads', () => {
   it('reads one email per line', () => {
@@ -127,6 +128,36 @@ describe('office365', () => {
   it('diagnoses tenant errors', () => {
     assert.match(diagnoseOfficeError('AADSTS7000215 Invalid client secret'), /secret/i);
     assert.match(diagnoseOfficeError('SmtpClientAuthenticationDisabled'), /SMTP AUTH/i);
+  });
+});
+
+describe('links', () => {
+  it('blocks impersonation, IPs, and private hosts', () => {
+    assert.equal(staticValidate('https://microsoft-login.xyz/signin').verdict, 'block');
+    assert.equal(staticValidate('https://docusign-secure.net/doc').verdict, 'block');
+    assert.equal(staticValidate('https://127.0.0.1/x').verdict, 'block');
+    assert.equal(staticValidate('https://8.8.8.8/x').verdict, 'block');
+    assert.equal(staticValidate('https://www.office.com/').ok, true);
+    assert.equal(staticValidate('https://yourcompany.com/offer').ok, true);
+  });
+
+  it('warns on public shorteners and http', () => {
+    const bit = staticValidate('https://bit.ly/abc');
+    assert.equal(bit.ok, true);
+    assert.ok(bit.warnings.length);
+    const http = staticValidate('http://yourcompany.com/a');
+    assert.ok(http.score < 90);
+  });
+
+  it('classifies scanners without changing destination logic', () => {
+    assert.equal(classifyClient('Mozilla/5.0').kind, 'human');
+    assert.equal(classifyClient('Mozilla/5.0 (compatible; Googlebot/2.1)').kind, 'bot');
+    assert.equal(classifyClient('Proofpoint URL Defense').kind, 'bot');
+  });
+
+  it('extracts urls from html', () => {
+    const urls = extractUrls('<a href="https://a.example/x">x</a> https://b.example/y');
+    assert.deepEqual(urls.sort(), ['https://a.example/x', 'https://b.example/y']);
   });
 });
 
