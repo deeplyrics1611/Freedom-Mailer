@@ -3,14 +3,30 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Freedom Mailer</title>
+  <title>Freedom Mailer — Sign in</title>
+  <meta http-equiv="Cache-Control" content="no-store" />
   <script>
     (function () {
       var t = localStorage.getItem('fm_theme') || 'phoenix';
       document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=2" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
+  <style>
+    #login {
+      position: relative;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    #login-form {
+      background: #14080a;
+      border: 1px solid #8b151c;
+      color: #f3e6e4;
+    }
+  </style>
 </head>
 <body>
   <div class="world-bg" aria-hidden="true"></div>
@@ -57,6 +73,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>
