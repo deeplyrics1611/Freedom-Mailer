@@ -7,10 +7,14 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <div class="world-bg" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+
   <!-- Login -->
   <div id="login" class="login-wrap hidden">
     <form id="login-form" class="login-card">
-      <div class="brand">✉️ Freedom Mailer</div>
+      <div class="brand">Freedom Mailer</div>
+      <p class="brand-tag">PHOENIX // GLOBAL RELAY</p>
       <p class="muted">Bulk send from SMTP you own — letters, placeholders, paste-in leads.</p>
       <input id="login-email" type="email" placeholder="Email" autocomplete="username" required />
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
@@ -22,7 +26,8 @@
   <!-- App -->
   <div id="app" class="hidden">
     <aside class="sidebar">
-      <div class="brand">✉️ Freedom Mailer</div>
+      <div class="brand">Freedom Mailer</div>
+      <div class="brand-tag">PHOENIX // GLOBAL RELAY</div>
       <nav id="nav"></nav>
       <div class="sidebar-foot">
         <div id="who" class="muted small"></div>
