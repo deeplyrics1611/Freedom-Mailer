@@ -1,8 +1,6 @@
-// ---- Freedom Mailer admin panel (vanilla SPA) ----
-const state = { token: localStorage.getItem('fm_token') || null, user: null, route: 'dashboard' };
-
+// Freedom Mailer panel
+const state = { token: localStorage.getItem('fm_token') || null, user: null, route: 'compose' };
 const $ = (id) => document.getElementById(id);
-const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function api(path, opts = {}) {
@@ -17,7 +15,7 @@ async function api(path, opts = {}) {
 
 function toast(msg, kind = 'ok') {
   const t = $('toast'); t.textContent = msg; t.className = `toast ${kind}`;
-  setTimeout(() => t.classList.add('hidden'), 3200);
+  setTimeout(() => t.classList.add('hidden'), 3600);
 }
 
 function logout() {
@@ -25,7 +23,6 @@ function logout() {
   $('app').classList.add('hidden'); $('login').classList.remove('hidden');
 }
 
-// ---- Auth ----
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('login-error').textContent = '';
@@ -41,8 +38,9 @@ $('login-form').addEventListener('submit', async (e) => {
 $('logout').addEventListener('click', logout);
 
 const NAV = [
+  ['compose', '✍️ Compose'],
   ['dashboard', '📊 Dashboard'],
-  ['senders', '📮 Sender identities'],
+  ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
   ['suppressions', '🚫 Suppressions'],
@@ -59,8 +57,7 @@ function renderNav() {
   $('nav').innerHTML = items
     .map(([r, label]) => `<a data-route="${r}" class="${r === state.route ? 'active' : ''}">${label}</a>`)
     .join('');
-  $('nav').querySelectorAll('a').forEach((a) =>
-    a.addEventListener('click', () => go(a.dataset.route)));
+  $('nav').querySelectorAll('a').forEach((a) => a.addEventListener('click', () => go(a.dataset.route)));
   $('who').textContent = `${state.user.email} · ${state.user.role}`;
 }
 
@@ -69,21 +66,36 @@ function go(route) { state.route = route; renderNav(); views[route](); }
 async function boot() {
   state.user = await api('/api/auth/me');
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
-  renderNav(); go('dashboard');
+  renderNav(); go('compose');
 }
 
-// ---- Views ----
 const views = {};
 const view = (html) => { $('view').innerHTML = html; };
 const badge = (status) => {
-  const map = { sent: 'ok', confirmed: 'ok', verified: 'ok', queued: 'warn', pending: 'warn',
-    sending: 'warn', draft: 'muted', failed: 'err', skipped: 'muted', unsubscribed: 'muted' };
-  return `<span class="badge ${map[status] || 'muted'}">${status}</span>`;
+  const map = {
+    sent: 'ok', confirmed: 'ok', verified: 'ok', queued: 'warn', pending: 'warn',
+    sending: 'warn', draft: 'muted', failed: 'err', skipped: 'muted', unsubscribed: 'muted',
+    smtp: 'muted', ovh: 'ok', webmail: 'warn', japan: 'ok', smtp_sms: 'warn',
+  };
+  return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
 };
 
+function insertAt(id, text) {
+  const el = $(id);
+  if (!el) return;
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  el.value = el.value.slice(0, start) + text + el.value.slice(end);
+  el.focus();
+  el.selectionStart = el.selectionEnd = start + text.length;
+  el.dispatchEvent(new Event('input'));
+}
+
 views.dashboard = async () => {
-  view(`<div class="page-head"><div><h1>Dashboard</h1></div></div>
-    <p class="sub">Overview of your sending activity.</p><div id="d-cards" class="cards"></div>`);
+  view(`<div class="page-head"><div><h1>Dashboard</h1></div>
+    <button class="secondary" id="go-compose">New compose</button></div>
+    <p class="sub">Sending activity for this account.</p><div id="d-cards" class="cards"></div>`);
+  $('go-compose').addEventListener('click', () => go('compose'));
   const s = await api('/api/stats');
   const card = (n, label) => `<div class="card"><div class="stat">${n}</div><div class="stat-label">${label}</div></div>`;
   $('d-cards').innerHTML = [
@@ -91,57 +103,334 @@ views.dashboard = async () => {
     card(s.lists, 'Lists'), card(s.campaigns, 'Campaigns'),
     card(s.sent, 'Messages sent'), card(s.queued, 'In queue'),
     card(s.failed, 'Failed'), card(s.suppressed, 'Suppressed'),
-    card(s.sms_enabled ? 'On' : 'Off', 'SMS channel'),
+    card(s.sms_enabled ? 'On' : 'Off', 'Twilio SMS'),
+    card(s.ai_enabled ? 'On' : 'Local', 'AI help'),
   ].join('');
 };
 
+views.compose = async () => {
+  const [senders, letters, ai, lists] = await Promise.all([
+    api('/api/senders'),
+    api('/api/letters'),
+    api('/api/ai/status'),
+    api('/api/lists'),
+  ]);
+  const verified = senders.filter((s) => s.verified);
+  view(`<div class="page-head"><h1>Compose &amp; send</h1></div>
+    <p class="sub">Paste recipients, pick a letter, merge placeholders, then queue the send from a verified identity you own.</p>
+    <div class="compose">
+      <div>
+        <form id="compose-form">
+          <div class="form-grid">
+            <div class="field"><label>Campaign name</label><input id="c-name" placeholder="August invoice batch"></div>
+            <div class="field"><label>Sender</label>
+              <select id="c-sender">
+                <option value="">— system default —</option>
+                ${verified.map((s) => `<option value="${s.id}" data-kind="${esc(s.kind)}">${esc(s.label)} · ${esc(s.kind)}</option>`).join('')}
+                ${senders.filter((s) => !s.verified).map((s) => `<option value="" disabled>${esc(s.label)} (unverified)</option>`).join('')}
+              </select>
+            </div>
+            <div class="field full"><label>Subject</label><input id="c-subject" placeholder="Invoice {{invoice_number}} for {{company}}"></div>
+          </div>
+
+          <h2>Recipients — paste, don’t upload</h2>
+          <p class="muted small">One per line. <code>email</code>, <code>Name &lt;email&gt;</code>, or <code>email, name, phone, company</code>. Optional header row.</p>
+          <textarea id="c-leads" rows="8" placeholder="email, name, phone, company
+alex@example.com, Alex Rivera, +1 555 0100, Northwind
+Jane Doe <jane@example.com>"></textarea>
+          <div class="actions" style="margin:8px 0 4px">
+            <button type="button" class="secondary tiny" id="c-parse">Parse paste</button>
+            <span id="c-parse-count" class="muted small"></span>
+          </div>
+          <div id="c-parse-box" class="parse-box hidden"></div>
+
+          <h2>HTML letters</h2>
+          <p class="muted small">These are <b>your</b> company notices (sign, invoice, file share, meeting). They are not third-party brand clones.</p>
+          <div id="letter-grid" class="letter-grid"></div>
+          <div id="letter-fields" class="form-grid"></div>
+          <div class="actions">
+            <button type="button" class="secondary" id="c-gen" disabled>Generate letter</button>
+            <select id="c-locale" style="max-width:140px"><option value="en">English</option><option value="ja">日本語</option></select>
+          </div>
+
+          <h2>Body</h2>
+          <div class="chips" id="ph-chips"></div>
+          <div class="field full" style="margin-top:10px"><label>HTML</label><textarea id="c-html" rows="10" placeholder="<p>Hi {{first_name|there}}…</p>"></textarea></div>
+          <div class="field full"><label>Plain text</label><textarea id="c-text" rows="4"></textarea></div>
+
+          <div class="ai-box">
+            <h2 style="margin-top:0">AI help</h2>
+            <p class="muted small">${ai.enabled ? 'Model connected. Rewrite, translate, or draft from a prompt.' : 'No API key — local help can generate letters and plain text. Set OPENAI_API_KEY for full rewrites.'}</p>
+            <div class="form-grid">
+              <div class="field"><label>Action</label>
+                <select id="ai-action">
+                  <option value="rewrite">Rewrite</option>
+                  <option value="compose">Compose from prompt</option>
+                  <option value="translate">Translate</option>
+                  <option value="shorten">Shorten</option>
+                  <option value="subject">Suggest subject</option>
+                  <option value="text">HTML → plain text</option>
+                  <option value="placeholders">Explain placeholders</option>
+                </select>
+              </div>
+              <div class="field"><label>Language</label>
+                <select id="ai-lang"><option value="en">English</option><option value="ja">日本語</option></select>
+              </div>
+              <div class="field full"><label>Prompt</label><textarea id="ai-prompt" rows="2" placeholder="Make this warmer. Keep {{first_name}} and the pay button."></textarea></div>
+            </div>
+            <button type="button" class="secondary" id="ai-run">Run AI help</button>
+            <div id="ai-notes" class="muted small" style="margin-top:8px"></div>
+          </div>
+
+          <div class="field"><label>Save onto list (optional)</label>
+            <select id="c-list">
+              <option value="">Create a new list from this paste</option>
+              ${lists.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}
+            </select>
+          </div>
+          <label class="check" style="margin:14px 0">
+            <input type="checkbox" id="c-consent">
+            <span>I confirm these people asked to hear from my organization. I will not impersonate another brand, and I understand unsubscribes are honored automatically.</span>
+          </label>
+          <div class="actions">
+            <button type="submit">Queue send</button>
+            <button type="button" class="secondary" id="c-save-tpl">Save as template</button>
+            <button type="button" class="secondary" id="c-preview-btn">Refresh preview</button>
+          </div>
+        </form>
+      </div>
+      <div class="preview-wrap">
+        <header><span>Live preview</span><span class="small" id="pv-count"></span></header>
+        <div class="preview-meta" id="pv-subject">Subject —</div>
+        <iframe id="pv-frame" class="preview-frame" sandbox="allow-same-origin" title="Email preview"></iframe>
+      </div>
+    </div>`);
+
+  let selectedKind = '';
+  const letterMap = Object.fromEntries(letters.letters.map((l) => [l.id, l]));
+  $('letter-grid').innerHTML = letters.letters.map((l) =>
+    `<button type="button" class="letter-card" data-kind="${l.id}">
+      <b>${esc(l.title)}</b><span>${esc(l.blurb)}</span></button>`
+  ).join('');
+  $('ph-chips').innerHTML = letters.placeholders.map((p) =>
+    `<button type="button" class="chip" data-ph="{{${p.key}}}">${p.key}</button>`
+  ).join('');
+
+  $('ph-chips').querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+    insertAt('c-html', b.dataset.ph);
+    refreshPreview();
+  }));
+
+  function renderLetterFields() {
+    const meta = letterMap[selectedKind];
+    const box = $('letter-fields');
+    if (!meta) { box.innerHTML = ''; $('c-gen').disabled = true; return; }
+    $('c-gen').disabled = false;
+    box.innerHTML = meta.fields.map((f) =>
+      `<div class="field ${['note','description','agenda'].includes(f.key) ? 'full' : ''}">
+        <label>${esc(f.label)}</label>
+        <input data-fk="${esc(f.key)}" placeholder="${esc(f.placeholder || '')}">
+      </div>`
+    ).join('');
+  }
+
+  $('letter-grid').querySelectorAll('.letter-card').forEach((b) => b.addEventListener('click', () => {
+    selectedKind = b.dataset.kind;
+    $('letter-grid').querySelectorAll('.letter-card').forEach((x) => x.classList.toggle('active', x === b));
+    renderLetterFields();
+  }));
+
+  $('c-gen').addEventListener('click', async () => {
+    const fields = {};
+    $('letter-fields').querySelectorAll('[data-fk]').forEach((i) => { if (i.value) fields[i.dataset.fk] = i.value; });
+    try {
+      const r = await api('/api/letters/generate', {
+        method: 'POST',
+        body: { kind: selectedKind, fields, locale: $('c-locale').value },
+      });
+      $('c-subject').value = r.subject;
+      $('c-html').value = r.html;
+      $('c-text').value = r.text;
+      toast('Letter generated');
+      refreshPreview();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  async function parsePaste() {
+    const r = await api('/api/leads/parse', { method: 'POST', body: { text: $('c-leads').value } });
+    $('c-parse-count').textContent = `${r.total} valid` + (r.invalid.length ? ` · ${r.invalid.length} skipped` : '');
+    const box = $('c-parse-box');
+    if (!r.total) { box.classList.remove('hidden'); box.innerHTML = '<span class="muted">No valid emails yet.</span>'; return r; }
+    box.classList.remove('hidden');
+    box.innerHTML = `<table><tr><th>Email</th><th>Name</th><th>Phone</th><th>Company</th></tr>` +
+      r.leads.slice(0, 25).map((l) => `<tr><td>${esc(l.email)}</td><td>${esc(l.name)}</td><td>${esc(l.phone)}</td><td>${esc(l.company)}</td></tr>`).join('') +
+      (r.total > 25 ? `<tr><td colspan="4" class="muted">…and ${r.total - 25} more</td></tr>` : '') + `</table>`;
+    return r;
+  }
+  $('c-parse').addEventListener('click', () => parsePaste().catch((e) => toast(e.message, 'err')));
+
+  async function refreshPreview() {
+    const parsed = await api('/api/leads/parse', { method: 'POST', body: { text: $('c-leads').value } }).catch(() => ({ leads: [] }));
+    const lead = parsed.leads?.[0] || null;
+    const r = await api('/api/leads/preview', {
+      method: 'POST',
+      body: { subject: $('c-subject').value, html: $('c-html').value, text: $('c-text').value, lead },
+    });
+    $('pv-subject').textContent = `Subject · ${r.subject || '—'} `;
+    $('pv-count').textContent = lead ? `merged with ${lead.email}` : 'sample data';
+    $('pv-frame').srcdoc = r.html || '<p style="font-family:sans-serif;color:#888;padding:24px">Nothing to preview yet.</p>';
+  }
+  $('c-preview-btn').addEventListener('click', () => refreshPreview().catch((e) => toast(e.message, 'err')));
+  ['c-subject', 'c-html'].forEach((id) => $(id).addEventListener('change', () => refreshPreview().catch(() => {})));
+
+  $('ai-run').addEventListener('click', async () => {
+    $('ai-notes').textContent = 'Working…';
+    try {
+      const r = await api('/api/ai/help', {
+        method: 'POST',
+        body: {
+          action: $('ai-action').value,
+          prompt: $('ai-prompt').value,
+          subject: $('c-subject').value,
+          html: $('c-html').value,
+          text: $('c-text').value,
+          language: $('ai-lang').value,
+          kind: selectedKind,
+        },
+      });
+      if (r.subject) $('c-subject').value = r.subject;
+      if (r.html) $('c-html').value = r.html;
+      if (r.text) $('c-text').value = r.text;
+      $('ai-notes').textContent = Array.isArray(r.notes) ? r.notes.filter(Boolean).join(' ') : (r.notes || 'Done.');
+      refreshPreview();
+    } catch (err) { $('ai-notes').textContent = ''; toast(err.message, 'err'); }
+  });
+
+  $('c-save-tpl').addEventListener('click', async () => {
+    const name = $('c-name').value || $('c-subject').value;
+    if (!name) return toast('Add a name or subject first', 'err');
+    try {
+      await api('/api/templates', {
+        method: 'POST',
+        body: { name, subject: $('c-subject').value, html: $('c-html').value, text: $('c-text').value },
+      });
+      toast('Template saved');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  $('compose-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await parsePaste();
+      const r = await api('/api/campaigns/compose', {
+        method: 'POST',
+        body: {
+          name: $('c-name').value || $('c-subject').value,
+          sender_id: $('c-sender').value || null,
+          subject: $('c-subject').value,
+          html: $('c-html').value,
+          text: $('c-text').value,
+          leads_text: $('c-leads').value,
+          consent: $('c-consent').checked,
+          list_id: $('c-list').value || null,
+          save_list: true,
+        },
+      });
+      toast(`Queued ${r.queued} · skipped ${r.skipped}`);
+      go('messages');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+};
+
 views.senders = async () => {
-  view(`<div class="page-head"><h1>Sender identities</h1></div>
-    <p class="sub">Add SMTP credentials for a mailbox or domain <b>you own</b>. Each identity must be verified before it can send.</p>
-    <div class="notice">Use real credentials from your own mail provider. Set up SPF, DKIM and DMARC on the sending domain for good deliverability.</div>
+  const presets = await api('/api/senders/presets');
+  view(`<div class="page-head"><h1>Senders</h1></div>
+    <p class="sub">SMTP for mailboxes and domains you own. OVH, webmail, and Japan hosts are presets that fill the official server — not a proxy.</p>
+    <div class="notice">SOCKS5 / IP-rotation relays are not supported. Japanese mailboxes send through Yahoo Japan, Sakura, Xserver, and the other official SMTP hosts below.</div>
+    <div class="kind-tabs" id="kind-tabs">
+      ${presets.kinds.map((k) => `<button type="button" data-kind="${k.id}">${esc(k.label)}</button>`).join('')}
+    </div>
+    <p class="muted small" id="kind-blurb"></p>
     <form id="sender-form" class="form-grid">
-      <div class="field"><label>Label</label><input name="label" required placeholder="Marketing mailbox"></div>
+      <div class="field"><label>Preset</label><select name="preset" id="preset-sel"></select></div>
+      <div class="field"><label>Label</label><input name="label" required placeholder="Billing mailbox"></div>
       <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="hello@yourdomain.com"></div>
       <div class="field"><label>From name</label><input name="from_name" placeholder="Your Company"></div>
-      <div class="field"><label>SMTP host</label><input name="host" required placeholder="smtp.yourprovider.com"></div>
-      <div class="field"><label>Port</label><input name="port" type="number" value="587"></div>
-      <div class="field"><label>Secure (TLS on connect)</label><select name="secure"><option value="false">No (STARTTLS)</option><option value="true">Yes (465)</option></select></div>
-      <div class="field"><label>Username</label><input name="username" required></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required></div>
-      <div class="actions full"><button type="submit">Add identity</button></div>
+      <div class="field"><label>SMTP host</label><input name="host" id="s-host" required placeholder="smtp.yourprovider.com"></div>
+      <div class="field"><label>Port</label><input name="port" id="s-port" type="number" value="587"></div>
+      <div class="field"><label>Secure (TLS on connect)</label>
+        <select name="secure" id="s-secure"><option value="false">No (STARTTLS 587)</option><option value="true">Yes (465)</option></select>
+      </div>
+      <div class="field"><label>Username</label><input name="username" required placeholder="usually the full email"></div>
+      <div class="field"><label>Password / app password</label><input name="password" type="password" required></div>
+      <div class="field full hidden" id="sms-gw-wrap">
+        <label>SMS gateway domain or pattern</label>
+        <select id="sms-gw-sel">${presets.sms_gateways.map((g) => `<option value="${esc(g.domain)}">${esc(g.label)}${g.domain ? ' · ' + g.domain : ''}</option>`).join('')}</select>
+        <input name="sms_gateway" id="sms-gw" placeholder="txt.att.net or {number}@sms.yourhost.com" style="margin-top:8px">
+        <p class="muted small">Each lead needs a phone number. The message is sent as email to <code>number@gateway</code>.</p>
+      </div>
+      <input type="hidden" name="kind" id="s-kind" value="smtp">
+      <div class="actions full"><button type="submit">Add sender</button></div>
     </form>
+    <p class="muted small" id="preset-hint"></p>
     <table id="sender-table"></table>`);
+
+  let kind = 'smtp';
+  function applyKind() {
+    $('s-kind').value = kind;
+    $('kind-tabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
+    const meta = presets.kinds.find((k) => k.id === kind);
+    $('kind-blurb').textContent = meta ? meta.blurb : '';
+    const opts = presets.presets.filter((p) => p.kind === kind);
+    $('preset-sel').innerHTML = opts.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
+    $('sms-gw-wrap').classList.toggle('hidden', kind !== 'smtp_sms');
+    applyPreset();
+  }
+  function applyPreset() {
+    const p = presets.presets.find((x) => x.id === $('preset-sel').value);
+    if (!p) return;
+    if (p.host) $('s-host').value = p.host;
+    $('s-port').value = p.port;
+    $('s-secure').value = p.secure ? 'true' : 'false';
+    $('preset-hint').textContent = p.hint || '';
+  }
+  $('kind-tabs').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.kind; applyKind(); }));
+  $('preset-sel').addEventListener('change', applyPreset);
+  $('sms-gw-sel').addEventListener('change', () => { if ($('sms-gw-sel').value) $('sms-gw').value = $('sms-gw-sel').value; });
+  applyKind();
+
   $('sender-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = e.target; const b = Object.fromEntries(new FormData(f));
     b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10);
-    try { await api('/api/senders', { method: 'POST', body: b }); f.reset(); toast('Identity added'); views.senders(); }
+    try { await api('/api/senders', { method: 'POST', body: b }); f.reset(); toast('Sender added'); views.senders(); }
     catch (err) { toast(err.message, 'err'); }
   });
   const rows = await api('/api/senders');
-  $('sender-table').innerHTML = `<tr><th>Label</th><th>From</th><th>Host</th><th>Status</th><th></th></tr>` +
+  $('sender-table').innerHTML = `<tr><th>Label</th><th>Type</th><th>From</th><th>Host</th><th>Status</th><th></th></tr>` +
     (rows.map((s) => `<tr>
-      <td>${esc(s.label)}</td><td>${esc(s.from_name)} &lt;${esc(s.from_email)}&gt;</td>
-      <td class="mono small">${esc(s.host)}:${s.port}</td>
+      <td>${esc(s.label)}</td><td>${badge(s.kind)}</td>
+      <td>${esc(s.from_name)} &lt;${esc(s.from_email)}&gt;</td>
+      <td class="mono small">${esc(s.host)}:${s.port}${s.sms_gateway ? `<div class="muted">${esc(s.sms_gateway)}</div>` : ''}</td>
       <td>${s.verified ? badge('verified') : badge('pending')}</td>
       <td><button class="tiny secondary" data-v="${s.id}">Verify</button>
           <button class="tiny danger" data-d="${s.id}">Delete</button></td></tr>`).join('')
-      || `<tr><td colspan="5" class="muted">No identities yet.</td></tr>`);
+      || `<tr><td colspan="6" class="muted">No senders yet.</td></tr>`);
   $('sender-table').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', async () => {
     try { await api(`/api/senders/${b.dataset.v}/verify`, { method: 'POST' }); toast('Verified ✓'); views.senders(); }
     catch (err) { toast(err.message, 'err'); }
   }));
   $('sender-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm('Delete this identity?')) return;
+    if (!confirm('Delete this sender?')) return;
     await api(`/api/senders/${b.dataset.d}`, { method: 'DELETE' }); views.senders();
   }));
 };
 
 views.lists = async () => {
   view(`<div class="page-head"><h1>Lists</h1></div>
-    <p class="sub">Audience lists use <b>double opt-in</b>: new subscribers must confirm before campaigns can reach them.</p>
+    <p class="sub">Paste recipients into a list. Double opt-in still applies unless you already hold recorded consent.</p>
     <form id="list-form" class="row">
-      <div class="field"><label>List name</label><input name="name" required placeholder="Newsletter"></div>
+      <div class="field"><label>List name</label><input name="name" required placeholder="Customers"></div>
       <div class="field" style="flex:1"><label>Description</label><input name="description"></div>
       <button type="submit">Create list</button>
     </form>
@@ -171,23 +460,44 @@ views.lists = async () => {
 async function openList(id, lists) {
   const list = lists.find((l) => l.id === id);
   const box = $('list-detail');
-  box.innerHTML = `<h2>${esc(list.name)} — subscribers</h2>
+  box.innerHTML = `<h2>${esc(list.name)} — paste leads</h2>
+    <textarea id="paste-box" rows="7" placeholder="email, name, phone, company
+alex@example.com, Alex Rivera, +15550100, Northwind"></textarea>
+    <label class="check" style="margin:10px 0"><input type="checkbox" id="paste-consent"><span>I confirm these people opted in to this list.</span></label>
+    <label class="check" style="margin:0 0 10px"><input type="checkbox" id="paste-confirmed"><span>I already have recorded consent (mark confirmed, skip the extra confirm email).</span></label>
+    <button type="button" id="paste-go">Add pasted leads</button>
+    <h2>Or add one</h2>
     <form id="sub-form" class="row">
       <div class="field"><label>Email</label><input name="email" type="email" required></div>
       <div class="field"><label>Name</label><input name="name"></div>
-      <label class="field small"><span>&nbsp;</span><label><input type="checkbox" name="preConfirmed" style="width:auto"> Already have recorded consent</label></label>
+      <div class="field"><label>Phone</label><input name="phone"></div>
+      <div class="field"><label>Company</label><input name="company"></div>
+      <label class="field small"><span>&nbsp;</span><label><input type="checkbox" name="preConfirmed" style="width:auto"> Recorded consent</label></label>
       <button type="submit">Add subscriber</button>
     </form>
-    <div class="notice">Adding a subscriber creates a <b>pending</b> confirmation. Send them the returned confirm link (or your own signup flow calls this). Only tick "recorded consent" if you already hold proof of opt-in.</div>
     <table id="sub-table"></table>`;
+  $('paste-go').addEventListener('click', async () => {
+    try {
+      const r = await api(`/api/lists/${id}/paste`, {
+        method: 'POST',
+        body: {
+          text: $('paste-box').value,
+          consent: $('paste-consent').checked,
+          preConfirmed: $('paste-confirmed').checked,
+        },
+      });
+      toast(`Added ${r.added}`); openList(id, lists);
+    } catch (err) { toast(err.message, 'err'); }
+  });
   $('sub-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const b = { email: fd.get('email'), name: fd.get('name') || '', preConfirmed: fd.get('preConfirmed') === 'on' };
+    const b = Object.fromEntries(fd);
+    b.preConfirmed = fd.get('preConfirmed') === 'on';
     try {
       const r = await api(`/api/lists/${id}/subscribe`, { method: 'POST', body: b });
       e.target.reset();
-      if (r.confirm_url) { prompt('Send this confirmation link to the subscriber:', r.confirm_url); }
+      if (r.confirm_url) prompt('Send this confirmation link to the subscriber:', r.confirm_url);
       toast('Subscriber added'); openList(id, lists);
     } catch (err) { toast(err.message, 'err'); }
   });
@@ -200,12 +510,12 @@ async function openList(id, lists) {
 }
 
 views.contacts = async () => {
-  view(`<div class="page-head"><h1>Contacts</h1></div><p class="sub">Everyone in your account.</p><table id="c-table"></table>`);
+  view(`<div class="page-head"><h1>Contacts</h1></div><p class="sub">Everyone in your account. Add people by pasting into a list or Compose.</p><table id="c-table"></table>`);
   const rows = await api('/api/contacts');
-  $('c-table').innerHTML = `<tr><th>Email</th><th>Name</th><th>Phone</th><th></th></tr>` +
-    (rows.map((c) => `<tr><td>${esc(c.email)}</td><td>${esc(c.name || '')}</td><td>${esc(c.phone || '')}</td>
+  $('c-table').innerHTML = `<tr><th>Email</th><th>Name</th><th>Phone</th><th>Company</th><th></th></tr>` +
+    (rows.map((c) => `<tr><td>${esc(c.email)}</td><td>${esc(c.name || '')}</td><td>${esc(c.phone || '')}</td><td>${esc(c.company || '')}</td>
       <td><button class="tiny danger" data-d="${c.id}">Delete</button></td></tr>`).join('')
-      || `<tr><td colspan="4" class="muted">No contacts yet.</td></tr>`);
+      || `<tr><td colspan="5" class="muted">No contacts yet.</td></tr>`);
   $('c-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/contacts/${b.dataset.d}`, { method: 'DELETE' }); views.contacts();
   }));
@@ -238,7 +548,7 @@ views.suppressions = async () => {
 
 views.templates = async () => {
   view(`<div class="page-head"><h1>Templates</h1></div>
-    <p class="sub">Reusable content. Use <code>{{name}}</code> and <code>{{email}}</code> merge fields.</p>
+    <p class="sub">Reusable content. Merge fields: <code>{{name}}</code> <code>{{first_name}}</code> <code>{{email}}</code> <code>{{company}}</code> <code>{{phone}}</code>. Fallback: <code>{{first_name|there}}</code>.</p>
     <form id="tpl-form" class="form-grid">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Subject</label><input name="subject"></div>
@@ -256,16 +566,17 @@ views.templates = async () => {
   $('tpl-table').innerHTML = `<tr><th>Name</th><th>Subject</th><th></th></tr>` +
     (rows.map((t) => `<tr><td>${esc(t.name)}</td><td>${esc(t.subject || '')}</td>
       <td><button class="tiny danger" data-d="${t.id}">Delete</button></td></tr>`).join('')
-      || `<tr><td colspan="3" class="muted">No templates yet.</td></tr>`);
+      || `<tr><td colspan="3" class="muted">No templates yet. Generate one from Compose.</td></tr>`);
   $('tpl-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/templates/${b.dataset.d}`, { method: 'DELETE' }); views.templates();
   }));
 };
 
 views.campaigns = async () => {
-  const [senders, lists] = await Promise.all([api('/api/senders'), api('/api/lists')]);
-  view(`<div class="page-head"><h1>Campaigns</h1></div>
-    <p class="sub">Send to <b>confirmed</b> subscribers of a list. Suppressed addresses are skipped; an unsubscribe footer is added automatically.</p>
+  const [senders, lists, tpls] = await Promise.all([api('/api/senders'), api('/api/lists'), api('/api/templates')]);
+  view(`<div class="page-head"><h1>Campaigns</h1>
+    <button class="secondary" id="to-compose">Open compose</button></div>
+    <p class="sub">Drafts against a saved list. Prefer <b>Compose</b> to paste leads and generate a letter in one step.</p>
     <form id="camp-form" class="form-grid">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Subject</label><input name="subject" required></div>
@@ -277,11 +588,24 @@ views.campaigns = async () => {
         <option value="">— choose —</option>
         ${lists.map((l) => `<option value="${l.id}">${esc(l.name)} (${l.confirmed} confirmed)</option>`).join('')}
       </select></div>
-      <div class="field full"><label>HTML body</label><textarea name="html" rows="6" placeholder="<p>Hi {{name}}…</p>"></textarea></div>
-      <div class="field full"><label>Plain text</label><textarea name="text" rows="3"></textarea></div>
+      <div class="field full"><label>Start from template</label>
+        <select id="tpl-pick"><option value="">— none —</option>
+          ${tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field full"><label>HTML body</label><textarea name="html" id="camp-html" rows="6" placeholder="<p>Hi {{first_name|there}}…</p>"></textarea></div>
+      <div class="field full"><label>Plain text</label><textarea name="text" id="camp-text" rows="3"></textarea></div>
       <div class="actions full"><button type="submit">Save draft</button></div>
     </form>
     <table id="camp-table"></table>`);
+  $('to-compose').addEventListener('click', () => go('compose'));
+  $('tpl-pick').addEventListener('change', () => {
+    const t = tpls.find((x) => String(x.id) === $('tpl-pick').value);
+    if (!t) return;
+    document.querySelector('#camp-form [name=subject]').value = t.subject || '';
+    $('camp-html').value = t.html || '';
+    $('camp-text').value = t.text || '';
+  });
   $('camp-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
@@ -363,9 +687,10 @@ views.account = async () => {
     </form>`);
   $('pw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/api/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-      e.target.reset(); toast('Password updated'); }
-    catch (err) { toast(err.message, 'err'); }
+    try {
+      await api('/api/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      e.target.reset(); toast('Password updated');
+    } catch (err) { toast(err.message, 'err'); }
   });
 };
 
@@ -400,7 +725,6 @@ views.users = async () => {
   }));
 };
 
-// ---- Start ----
 (async () => {
   if (state.token) { try { await boot(); return; } catch { /* fall through */ } }
   $('login').classList.remove('hidden');

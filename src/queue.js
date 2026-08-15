@@ -57,9 +57,9 @@ async function processMessage(msg) {
         sender,
         to: msg.to_address,
         subject: msg.subject,
-        html: msg.html,
+        html: msg.channel === 'smtp_sms' ? undefined : msg.html,
         text: msg.text,
-        headers,
+        headers: msg.channel === 'smtp_sms' ? undefined : headers,
       });
     }
     db.prepare("UPDATE messages SET status = 'sent', error = '', sent_at = datetime('now') WHERE id = ?").run(

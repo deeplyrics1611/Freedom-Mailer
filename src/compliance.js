@@ -1,6 +1,7 @@
 import { customAlphabet } from 'nanoid';
 import { config } from './config.js';
 import { db } from './db.js';
+import { renderTemplate as mergeFields } from './placeholders.js';
 
 const genToken = customAlphabet('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', 32);
 export const newToken = () => genToken();
@@ -48,10 +49,4 @@ export function withUnsubscribeFooter({ html, text }, token) {
   };
 }
 
-// Simple {{name}} / {{email}} style merge-field substitution.
-export function renderTemplate(str, vars) {
-  if (!str) return str;
-  return str.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) =>
-    vars[k] === undefined || vars[k] === null ? '' : String(vars[k])
-  );
-}
+export const renderTemplate = mergeFields;

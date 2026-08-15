@@ -29,6 +29,11 @@ export const config = {
     authToken: process.env.TWILIO_AUTH_TOKEN || '',
     fromNumber: process.env.TWILIO_FROM_NUMBER || '',
   },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || '',
+    baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  },
 };
 
 export const smsEnabled = () =>

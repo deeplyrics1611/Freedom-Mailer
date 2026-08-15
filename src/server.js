@@ -17,6 +17,10 @@ import templateRoutes from './routes/templates.js';
 import campaignRoutes from './routes/campaigns.js';
 import messagingRoutes from './routes/messaging.js';
 import publicRoutes from './routes/public.js';
+import letterRoutes from './routes/letters.js';
+import aiRoutes from './routes/ai.js';
+import leadRoutes from './routes/leads.js';
+import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -42,7 +46,7 @@ bootstrapAdmin();
 const authLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false });
 const apiLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
 
-app.get('/health', (req, res) => res.json({ ok: true, sms: smsEnabled() }));
+app.get('/health', (req, res) => res.json({ ok: true, sms: smsEnabled(), ai: aiEnabled() }));
 
 // Dashboard stats for the logged-in user.
 app.get('/api/stats', requireAuth, (req, res) => {
@@ -61,6 +65,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
     failed: one("SELECT COUNT(*) n FROM messages WHERE user_id = ? AND status='failed'"),
     suppressed: one('SELECT COUNT(*) n FROM suppressions WHERE user_id = ?'),
     sms_enabled: smsEnabled(),
+    ai_enabled: aiEnabled(),
   });
 });
 
@@ -84,6 +89,9 @@ app.use('/api/lists', listRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/campaigns', campaignRoutes);
+app.use('/api/letters', letterRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/leads', leadRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

@@ -141,4 +141,20 @@ CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_subs_list ON subscriptions(list_id, status);
 `);
 
+function addColumn(table, column, spec) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${spec}`);
+  }
+}
+
+addColumn('senders', 'kind', "TEXT NOT NULL DEFAULT 'smtp'");
+addColumn('senders', 'provider', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'sms_gateway', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'company', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'custom1', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'custom2', "TEXT NOT NULL DEFAULT ''");
+addColumn('campaigns', 'channel', "TEXT NOT NULL DEFAULT 'email'");
+
 export default db;

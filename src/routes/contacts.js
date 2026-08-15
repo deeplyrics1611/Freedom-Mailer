@@ -8,7 +8,9 @@ router.use(requireAuth);
 
 router.get('/', (req, res) => {
   const rows = db
-    .prepare('SELECT id, email, name, phone, created_at FROM contacts WHERE user_id = ? ORDER BY id DESC LIMIT 1000')
+    .prepare(
+      'SELECT id, email, name, phone, company, title, custom1, custom2, created_at FROM contacts WHERE user_id = ? ORDER BY id DESC LIMIT 1000'
+    )
     .all(req.user.id);
   res.json(rows);
 });
