@@ -4,6 +4,7 @@ import { sendEmail } from './mailer.js';
 import { sendSms } from './sms.js';
 import { isSuppressed, suppress } from './compliance.js';
 import { isLicenseActive } from './license.js';
+import { boolSetting } from './settings.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -42,6 +43,12 @@ async function processMessage(msg) {
   if (!isLicenseActive(owner)) {
     db.prepare(
       "UPDATE messages SET status = 'skipped', error = 'license expired' WHERE id = ?"
+    ).run(msg.id);
+    return;
+  }
+  if (boolSetting('pause_sends') || boolSetting('maintenance')) {
+    db.prepare(
+      "UPDATE messages SET status = 'skipped', error = 'sending paused by admin' WHERE id = ?"
     ).run(msg.id);
     return;
   }

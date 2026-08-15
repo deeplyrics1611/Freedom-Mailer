@@ -306,6 +306,33 @@ describe('providers', () => {
   });
 });
 
+describe('features', () => {
+  it('defaults every client tool on, and honors explicit off', async () => {
+    const { parseFeatures, hasFeature } = await import('./features.js');
+    const all = parseFeatures('');
+    assert.equal(all.compose, true);
+    assert.equal(all.office365, true);
+    const off = parseFeatures('{"compose":false,"ai":false}');
+    assert.equal(off.compose, false);
+    assert.equal(off.ai, false);
+    assert.equal(off.senders, true);
+    assert.equal(hasFeature({ role: 'admin', features: '{"compose":false}' }, 'compose'), true);
+    assert.equal(hasFeature({ role: 'user', features: '{"compose":false}' }, 'compose'), false);
+  });
+
+  it('applies tool presets', async () => {
+    const { applyPreset } = await import('./features.js');
+    const mailer = applyPreset('mailer');
+    assert.equal(mailer.compose, true);
+    assert.equal(mailer.senders, true);
+    assert.equal(mailer.campaigns, false);
+    assert.equal(mailer.apikeys, false);
+    const lock = applyPreset('lockdown');
+    assert.equal(lock.compose, false);
+    assert.equal(applyPreset('nope'), null);
+  });
+});
+
 describe('license', () => {
   it('computes 3-day, monthly, and lifetime expiry', () => {
     const from = new Date('2026-08-15T00:00:00.000Z');

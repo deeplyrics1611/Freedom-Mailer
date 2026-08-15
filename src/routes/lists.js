@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { newToken, confirmUrl } from '../compliance.js';
 import { parseLeads } from '../leads.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('campaigns'));
 
 router.get('/', (req, res) => {
   const lists = db

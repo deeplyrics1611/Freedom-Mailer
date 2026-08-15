@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { hashPassword, requireAuth, requireAdmin } from '../auth.js';
 import { LICENSE_PLANS, planById, computeExpiry, extendExpiry, publicUser } from '../license.js';
+import { parseFeatures } from '../features.js';
+import { logAdmin } from '../audit.js';
 
 const router = Router();
 router.use(requireAuth, requireAdmin);
@@ -13,7 +15,7 @@ router.get('/plans', (req, res) => {
 router.get('/', (req, res) => {
   const users = db
     .prepare(
-      'SELECT id, email, role, daily_quota, active, license_plan, license_expires_at, created_at FROM users ORDER BY id'
+      'SELECT id, email, role, daily_quota, active, license_plan, license_expires_at, features, notes, last_login, created_at FROM users ORDER BY id'
     )
     .all();
   res.json(users.map((u) => publicUser(u)));
@@ -51,6 +53,7 @@ router.post('/', (req, res) => {
         expiry.expires_at
       );
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+    logAdmin(req.user, 'create_client', user.id, { email: user.email, license_plan: user.license_plan });
     res.status(201).json(publicUser(user));
   } catch (e) {
     if (String(e).includes('UNIQUE')) return res.status(409).json({ error: 'Email already exists' });
@@ -62,7 +65,7 @@ router.patch('/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'Not found' });
-  const { role, daily_quota, active, password, license_plan, license_action } = req.body || {};
+  const { role, daily_quota, active, password, license_plan, license_action, notes, features } = req.body || {};
   if (role !== undefined) {
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role === 'admin' ? 'admin' : 'user', id);
     if (role === 'admin') {
@@ -89,14 +92,31 @@ router.patch('/:id', (req, res) => {
       db.prepare('UPDATE users SET daily_quota = ? WHERE id = ?').run(plan.dailyQuota, id);
     }
   }
+  if (notes !== undefined) {
+    db.prepare('UPDATE users SET notes = ? WHERE id = ?').run(String(notes).slice(0, 500), id);
+  }
+  if (features && typeof features === 'object') {
+    db.prepare('UPDATE users SET features = ? WHERE id = ?').run(JSON.stringify(parseFeatures(features)), id);
+  }
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  logAdmin(req.user, 'patch_client', id, {
+    role,
+    daily_quota,
+    active,
+    password: password ? 'reset' : undefined,
+    license_plan,
+    license_action,
+    notes: notes !== undefined,
+  });
   res.json(publicUser(updated));
 });
 
 router.delete('/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
+  const gone = db.prepare('SELECT email FROM users WHERE id = ?').get(id);
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  logAdmin(req.user, 'delete_client', id, { email: gone?.email || '' });
   res.json({ ok: true });
 });
 

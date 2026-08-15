@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { generateLetter, letterCatalog } from '../letters.js';
 import { PLACEHOLDERS } from '../placeholders.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('compose'));
 
 router.get('/', (req, res) => {
   res.json({ letters: letterCatalog(), placeholders: PLACEHOLDERS });

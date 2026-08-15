@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireApiKey } from '../auth.js';
+import { requireApiKey, requireFeature } from '../auth.js';
 import { isSuppressed } from '../compliance.js';
 import { smsEnabled } from '../config.js';
 
@@ -9,7 +9,7 @@ import { smsEnabled } from '../config.js';
 // requested by the recipient, so it bypasses list opt-in — but it STILL
 // respects the suppression list, and callers must send from an owned identity.
 const router = Router();
-router.use(requireApiKey);
+router.use(requireApiKey, requireFeature('apikeys'));
 
 function checkDailyQuota(userId, quota) {
   const row = db

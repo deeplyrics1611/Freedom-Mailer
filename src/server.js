@@ -23,6 +23,7 @@ import leadRoutes from './routes/leads.js';
 import office365Routes from './routes/office365.js';
 import linkRoutes from './routes/links.js';
 import deliverabilityRoutes from './routes/deliverability.js';
+import adminRoutes from './routes/admin.js';
 import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,6 +124,7 @@ app.get('/api/messages', requireAuth, (req, res) => {
 // Panel API routes.
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/apikeys', apiKeyRoutes);
 app.use('/api/senders', senderRoutes);
 app.use('/api/lists', listRoutes);

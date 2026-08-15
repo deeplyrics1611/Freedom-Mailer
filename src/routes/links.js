@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import {
   newLinkCode,
   shortUrl,
@@ -10,7 +10,7 @@ import {
 } from '../links.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('links'));
 
 function rowOut(r) {
   return {

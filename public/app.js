@@ -93,15 +93,46 @@ const NAV = [
   ['apikeys', '🔑 API keys'],
   ['account', '⚙️ Account'],
 ];
-const ADMIN_NAV = [['users', '🛡️ Users & licenses']];
+const ADMIN_NAV = [
+  ['admin', '🎛️ Admin'],
+  ['users', '👥 Clients'],
+];
+const ROUTE_FEATURE = {
+  compose: 'compose',
+  office365: 'office365',
+  links: 'links',
+  deliverability: 'deliverability',
+  senders: 'senders',
+  lists: 'campaigns',
+  contacts: 'campaigns',
+  templates: 'campaigns',
+  campaigns: 'campaigns',
+  apikeys: 'apikeys',
+};
+
+function clientCan(feature) {
+  if (!state.user) return false;
+  if (state.user.role === 'admin') return true;
+  return state.user.features?.[feature] !== false;
+}
 
 function renderNav() {
-  const items = [...NAV, ...(state.user.role === 'admin' ? ADMIN_NAV : [])];
+  const allowed = NAV.filter(([r]) => {
+    const feat = ROUTE_FEATURE[r];
+    return !feat || clientCan(feat);
+  });
+  const items = state.user.role === 'admin' ? [...ADMIN_NAV, ...allowed] : allowed;
   $('nav').innerHTML = items
     .map(([r, label]) => `<a data-route="${r}" class="${r === state.route ? 'active' : ''}">${label}</a>`)
     .join('');
   $('nav').querySelectorAll('a').forEach((a) => a.addEventListener('click', () => go(a.dataset.route)));
   $('who').textContent = `${state.user.email} · ${state.user.role}${state.user.license?.label ? ' · ' + state.user.license.label : ''}`;
+  const banner = $('ops-banner');
+  if (banner) {
+    const msg = state.user.banner || (state.user.maintenance ? 'Maintenance mode — sending is paused.' : '') || (state.user.pause_sends ? 'The operator paused sending.' : '');
+    banner.classList.toggle('hidden', !msg);
+    banner.textContent = msg;
+  }
 }
 
 function go(route) { state.route = route; renderNav(); views[route](); }
@@ -115,7 +146,7 @@ async function boot() {
     go('account');
     return;
   }
-  go('compose');
+  go(state.user.role === 'admin' ? 'admin' : 'compose');
 }
 
 const views = {};
@@ -1333,6 +1364,240 @@ views.account = async () => {
       e.target.reset(); toast('Password updated');
     } catch (err) { toast(err.message, 'err'); }
   });
+};
+
+views.admin = async () => {
+  const data = await api('/api/admin/overview');
+  const s = data.summary;
+  const settings = data.settings || {};
+  const pct = (used, cap) => Math.min(100, Math.round((used / Math.max(cap || 1, 1)) * 100));
+  view(`<div class="admin-hero">
+      <div>
+        <p class="brand-tag">OPERATOR // COMMAND</p>
+        <h1>Admin dashboard</h1>
+        <p class="sub">Control every client: licenses, tools they can see, sending kill-switch, and live traffic.</p>
+      </div>
+      <button class="secondary" id="admin-refresh">Refresh</button>
+    </div>
+    <div class="cards admin-kpis">
+      <div class="card"><div class="stat">${s.clients}</div><div class="stat-label">Clients</div></div>
+      <div class="card"><div class="stat">${s.license_ok}</div><div class="stat-label">Licenses live</div></div>
+      <div class="card"><div class="stat">${s.expired}</div><div class="stat-label">Expired / locked</div></div>
+      <div class="card"><div class="stat">${s.today}</div><div class="stat-label">Sends last 24h</div></div>
+      <div class="card"><div class="stat">${s.queued}</div><div class="stat-label">Queued</div></div>
+      <div class="card"><div class="stat">${s.failed}</div><div class="stat-label">Failed</div></div>
+    </div>
+
+    <div class="admin-grid">
+      <section class="card admin-panel">
+        <h2>Issue a client license</h2>
+        <form id="admin-create" class="form-grid">
+          <div class="field"><label>Email</label><input name="email" type="email" required placeholder="client@brand.com"></div>
+          <div class="field"><label>Password</label><input name="password" type="password" required minlength="8"></div>
+          <div class="field"><label>License</label>
+            <select name="license_plan">
+              <option value="3day">3-day</option>
+              <option value="monthly" selected>Monthly</option>
+              <option value="lifetime">Lifetime</option>
+            </select>
+          </div>
+          <div class="field"><label>Daily quota</label><input name="daily_quota" type="number" placeholder="plan default"></div>
+          <div class="actions full"><button type="submit">Create client</button></div>
+        </form>
+      </section>
+      <section class="card admin-panel">
+        <h2>Operator controls</h2>
+        <p class="muted small">These hit every client account at once.</p>
+        <div class="field"><label>Banner shown in every client panel</label>
+          <input id="ops-banner-input" value="${esc(settings.banner || '')}" placeholder="Scheduled maintenance tonight 02:00 UTC">
+        </div>
+        <div class="check"><input type="checkbox" id="ops-pause" ${settings.pause_sends === '1' ? 'checked' : ''}>
+          <span>Pause all sending (queue skips until you uncheck)</span></div>
+        <div class="check"><input type="checkbox" id="ops-maint" ${settings.maintenance === '1' ? 'checked' : ''}>
+          <span>Maintenance mode</span></div>
+        <div class="actions"><button type="button" id="ops-save">Save controls</button></div>
+        <p class="muted small">Rate ${data.system.rate_per_minute}/min · AI ${data.system.ai ? 'on' : 'off'} · SMS ${data.system.sms ? 'on' : 'off'}</p>
+      </section>
+    </div>
+
+    <div class="admin-toolbar">
+      <h2>Clients — licenses, usage, tools</h2>
+      <input id="admin-search" type="search" placeholder="Search email or notes">
+    </div>
+    <p class="muted small">Toggle the tools each client can see. Unchecked items disappear from their sidebar and API. Presets apply a whole kit at once.</p>
+    <div id="admin-clients"></div>
+
+    <h2>Live traffic</h2>
+    <table id="admin-traffic"></table>
+
+    <h2>Operator log</h2>
+    <table id="admin-events"></table>`);
+
+  $('admin-refresh').addEventListener('click', () => views.admin());
+  $('admin-create').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    if (b.daily_quota) b.daily_quota = parseInt(b.daily_quota, 10); else delete b.daily_quota;
+    b.role = 'user';
+    try { await api('/api/users', { method: 'POST', body: b }); toast('Client created'); views.admin(); }
+    catch (err) { toast(err.message, 'err'); }
+  });
+  $('ops-save').addEventListener('click', async () => {
+    try {
+      const settings = await api('/api/admin/settings', {
+        method: 'PATCH',
+        body: {
+          banner: $('ops-banner-input').value,
+          pause_sends: $('ops-pause').checked,
+          maintenance: $('ops-maint').checked,
+        },
+      });
+      state.user.banner = settings.banner;
+      state.user.pause_sends = settings.pause_sends === '1';
+      state.user.maintenance = settings.maintenance === '1';
+      renderNav();
+      toast('Operator controls saved');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  const featList = data.features || [];
+  const presets = data.presets || [];
+  const presetOpts = presets.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+
+  function bindClients() {
+    $('admin-clients').querySelectorAll('[data-feat]').forEach((box) => {
+      box.addEventListener('change', async () => {
+        const id = box.dataset.feat;
+        const payload = {};
+        $('admin-clients').querySelectorAll(`[data-feat="${id}"]`).forEach((el) => { payload[el.dataset.key] = el.checked; });
+        try { await api(`/api/admin/clients/${id}/features`, { method: 'PATCH', body: payload }); toast('Client tools updated'); }
+        catch (err) { toast(err.message, 'err'); box.checked = !box.checked; }
+      });
+    });
+    $('admin-clients').querySelectorAll('[data-preset]').forEach((sel) => {
+      sel.addEventListener('change', async () => {
+        if (!sel.value) return;
+        try {
+          await api(`/api/admin/clients/${sel.dataset.preset}/features`, { method: 'PATCH', body: { preset: sel.value } });
+          toast('Preset applied');
+          views.admin();
+        } catch (err) { toast(err.message, 'err'); sel.value = ''; }
+      });
+    });
+    $('admin-clients').querySelectorAll('[data-quota]').forEach((inp) => {
+      inp.addEventListener('change', async () => {
+        const n = parseInt(inp.value, 10);
+        if (!Number.isFinite(n) || n < 0) return;
+        try { await api(`/api/users/${inp.dataset.quota}`, { method: 'PATCH', body: { daily_quota: n } }); toast('Quota saved'); }
+        catch (err) { toast(err.message, 'err'); }
+      });
+    });
+    $('admin-clients').querySelectorAll('[data-notes]').forEach((ta) => {
+      ta.addEventListener('change', async () => {
+        try { await api(`/api/users/${ta.dataset.notes}`, { method: 'PATCH', body: { notes: ta.value } }); toast('Notes saved'); }
+        catch (err) { toast(err.message, 'err'); }
+      });
+    });
+    $('admin-clients').querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+      const text = `Freedom Mailer\nSign in: ${location.origin}\nEmail: ${b.dataset.copy}\nAsk the operator for the password.`;
+      try { await navigator.clipboard.writeText(text); toast('Invite copied'); }
+      catch { toast(text); }
+    }));
+    $('admin-clients').querySelectorAll('[data-lic]').forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await api(`/api/users/${b.dataset.lic}`, {
+          method: 'PATCH',
+          body: { license_plan: b.dataset.plan, license_action: b.dataset.plan === 'lifetime' ? 'set' : 'extend' },
+        });
+        toast('License updated'); views.admin();
+      } catch (err) { toast(err.message, 'err'); }
+    }));
+    $('admin-clients').querySelectorAll('[data-t]').forEach((b) => b.addEventListener('click', async () => {
+      await api(`/api/users/${b.dataset.t}`, { method: 'PATCH', body: { active: b.dataset.a === '0' } }); views.admin();
+    }));
+    $('admin-clients').querySelectorAll('[data-pw]').forEach((b) => b.addEventListener('click', async () => {
+      const next = prompt('New password (min 8 characters)');
+      if (!next) return;
+      try { await api(`/api/users/${b.dataset.pw}`, { method: 'PATCH', body: { password: next } }); toast('Password reset'); }
+      catch (err) { toast(err.message, 'err'); }
+    }));
+    $('admin-clients').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Delete this client and all their data?')) return;
+      await api(`/api/users/${b.dataset.d}`, { method: 'DELETE' }); views.admin();
+    }));
+  }
+
+  function renderClients(filter = '') {
+    const q = filter.trim().toLowerCase();
+    const rows = (data.users || []).filter((u) => {
+      if (!q) return true;
+      return `${u.email} ${u.notes || ''} ${u.license_plan || ''}`.toLowerCase().includes(q);
+    });
+    $('admin-clients').innerHTML = rows.map((u) => {
+      const lic = u.license || {};
+      const bar = pct(u.usage_today || 0, u.daily_quota);
+      const exp = u.license_expires_at ? String(u.license_expires_at).replace('T', ' ').slice(0, 16) : 'lifetime';
+      const you = u.id === state.user.id;
+      const last = u.last_login ? String(u.last_login).replace('T', ' ').slice(0, 16) : 'never signed in';
+      const toggles = featList.map((f) => {
+        const on = u.role === 'admin' || u.features?.[f.id] !== false;
+        return `<label class="feat-toggle ${u.role === 'admin' ? 'locked' : ''}">
+          <input type="checkbox" data-feat="${u.id}" data-key="${f.id}" ${on ? 'checked' : ''} ${u.role === 'admin' ? 'disabled' : ''}>
+          ${esc(f.label)}</label>`;
+      }).join('');
+      return `<article class="client-card" data-client="${u.id}">
+        <header>
+          <div>
+            <b>${esc(u.email)}</b>
+            ${badge(u.role === 'admin' ? 'verified' : 'pending')} ${esc(u.role)}
+            ${badge(lic.ok ? (u.license_plan || 'lifetime') : 'expired')} ${esc(lic.label || '')}
+            ${u.active ? '' : badge('expired') + ' disabled'}
+          </div>
+          <div class="muted small">${esc(exp)}${exp === 'lifetime' ? '' : ' UTC'} · last login ${esc(last)}</div>
+        </header>
+        <div class="usage-bar"><span style="width:${bar}%"></span></div>
+        <div class="muted small">${u.usage_today || 0} / ${u.daily_quota} today · ${u.sent || 0} sent · ${u.queued || 0} queued · ${u.failed || 0} failed · ${u.senders || 0} senders · ${u.lists || 0} lists</div>
+        ${you ? '' : `<div class="feat-toolbar">
+          <select data-preset="${u.id}"><option value="">Tool preset…</option>${presetOpts}</select>
+          <label class="quota-edit">Quota/day <input type="number" min="0" data-quota="${u.id}" value="${u.daily_quota}"></label>
+        </div>`}
+        <div class="feat-row">${toggles}</div>
+        <label class="notes-label">Operator notes
+          <textarea rows="2" data-notes="${u.id}" placeholder="Internal notes (client never sees this)">${esc(u.notes || '')}</textarea>
+        </label>
+        <div class="row client-actions">
+          ${you ? '<span class="muted small">you</span>' : `
+          <button class="tiny secondary" data-copy="${esc(u.email)}">Copy invite</button>
+          <button class="tiny secondary" data-lic="${u.id}" data-plan="3day">+3 days</button>
+          <button class="tiny secondary" data-lic="${u.id}" data-plan="monthly">+1 month</button>
+          <button class="tiny secondary" data-lic="${u.id}" data-plan="lifetime">Lifetime</button>
+          <button class="tiny secondary" data-t="${u.id}" data-a="${u.active ? 1 : 0}">${u.active ? 'Disable' : 'Enable'}</button>
+          <button class="tiny secondary" data-pw="${u.id}">Reset password</button>
+          <button class="tiny danger" data-d="${u.id}">Delete</button>`}
+        </div>
+      </article>`;
+    }).join('') || `<p class="muted">${q ? 'No matching clients.' : 'No clients yet.'}</p>`;
+    bindClients();
+  }
+
+  renderClients();
+  $('admin-search').addEventListener('input', (e) => renderClients(e.target.value));
+
+  $('admin-traffic').innerHTML = `<tr><th>When</th><th>Client</th><th>To</th><th>Subject</th><th>Status</th></tr>` +
+    ((data.recent || []).map((m) => `<tr>
+      <td class="muted small">${esc(m.created_at)}</td>
+      <td>${esc(m.user_email)}</td>
+      <td class="mono small">${esc(m.to_address)}</td>
+      <td>${esc(m.subject || '')}</td>
+      <td>${badge(m.status)}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">No traffic yet.</td></tr>`);
+
+  $('admin-events').innerHTML = `<tr><th>When</th><th>Operator</th><th>Action</th><th>Client</th><th>Detail</th></tr>` +
+    ((data.events || []).map((ev) => `<tr>
+      <td class="muted small">${esc(ev.created_at)}</td>
+      <td>${esc(ev.admin_email || '')}</td>
+      <td>${esc(ev.action)}</td>
+      <td>${esc(ev.target_email || '')}</td>
+      <td class="muted small">${esc(ev.detail || '')}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">No operator actions yet.</td></tr>`);
 };
 
 views.users = async () => {

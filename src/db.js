@@ -156,6 +156,9 @@ addColumn('senders', 'auth_mode', "TEXT NOT NULL DEFAULT ''");
 addColumn('senders', 'region', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'license_plan', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'license_expires_at', 'TEXT');
+addColumn('users', 'features', "TEXT NOT NULL DEFAULT '{}'");
+addColumn('users', 'notes', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'last_login', 'TEXT');
 addColumn('contacts', 'company', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom1', "TEXT NOT NULL DEFAULT ''");
@@ -209,6 +212,16 @@ CREATE TABLE IF NOT EXISTS link_clicks (
 
 CREATE INDEX IF NOT EXISTS idx_short_code ON short_links(code);
 CREATE INDEX IF NOT EXISTS idx_clicks_link ON link_clicks(link_id, created_at);
+
+CREATE TABLE IF NOT EXISTS admin_events (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action         TEXT NOT NULL,
+  target_user_id INTEGER,
+  detail         TEXT NOT NULL DEFAULT '',
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_admin_events ON admin_events(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS mx_cache (
   domain     TEXT PRIMARY KEY,

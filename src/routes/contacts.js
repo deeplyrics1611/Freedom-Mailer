@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { suppress } from '../compliance.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('campaigns'));
 
 router.get('/', (req, res) => {
   const rows = db

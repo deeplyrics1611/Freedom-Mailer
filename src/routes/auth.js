@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { verifyPassword, hashPassword, signToken, requireAuth } from '../auth.js';
 import { licenseStatus, publicUser } from '../license.js';
+import { allSettings } from '../settings.js';
 
 const router = Router();
 
@@ -19,14 +20,23 @@ router.post('/login', (req, res) => {
       license,
     });
   }
+  db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
+  user.last_login = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const settings = allSettings();
   res.json({
     token: signToken(user),
-    user: publicUser(user),
+    user: { ...publicUser(user), banner: settings.banner, maintenance: settings.maintenance === '1', pause_sends: settings.pause_sends === '1' },
   });
 });
 
 router.get('/me', requireAuth, (req, res) => {
-  res.json(publicUser(req.user));
+  const settings = allSettings();
+  res.json({
+    ...publicUser(req.user),
+    banner: settings.banner,
+    maintenance: settings.maintenance === '1',
+    pause_sends: settings.pause_sends === '1',
+  });
 });
 
 router.post('/change-password', requireAuth, (req, res) => {

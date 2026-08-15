@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { debounceEmails, lookupMx } from '../deliverability.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('deliverability'));
 
 const CACHE_HOURS = 24;
 

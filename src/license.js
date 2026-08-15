@@ -1,3 +1,5 @@
+import { parseFeatures } from './features.js';
+
 export const LICENSE_PLANS = [
   { id: '3day', label: '3-day', days: 3, dailyQuota: 500, blurb: 'Short access window.' },
   { id: 'monthly', label: 'Monthly', days: 30, dailyQuota: 5000, blurb: '30 days from issue or renewal.' },
@@ -76,6 +78,9 @@ export function publicUser(user, now = new Date()) {
     license_plan: user.license_plan || '',
     license_expires_at: user.license_expires_at || null,
     license,
+    features: parseFeatures(user.features),
+    notes: user.notes || '',
+    last_login: user.last_login || null,
     created_at: user.created_at,
   };
 }

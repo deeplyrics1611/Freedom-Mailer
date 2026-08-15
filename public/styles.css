@@ -556,6 +556,80 @@ pre {
 .theme-swatch { height: 28px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border); }
 .theme-card .muted { font-weight: 500; }
 
+.ops-banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--ember);
+  background: var(--panel2);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.admin-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.admin-hero .brand-tag { margin: 0 0 6px; }
+.admin-kpis { margin: 12px 0 18px; }
+.admin-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-bottom: 22px; }
+.admin-panel { padding: 18px; }
+.client-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+  backdrop-filter: blur(12px);
+}
+.client-card header { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.usage-bar {
+  height: 6px;
+  background: var(--panel2);
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+.usage-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--ember));
+}
+.feat-row { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 10px 0; }
+.feat-toggle { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.feat-toggle input { width: auto; }
+.feat-toggle.locked { opacity: .55; }
+.client-actions { margin-top: 8px; }
+.admin-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.admin-toolbar h2 { margin: 0; }
+.admin-toolbar input[type="search"] { max-width: 280px; }
+.feat-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0 0;
+}
+.feat-toolbar select { width: auto; min-width: 160px; }
+.quota-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.quota-edit input { width: 100px; }
+.notes-label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.notes-label textarea { margin-top: 4px; }
+
 @media (max-width: 1100px) {
   .compose { grid-template-columns: 1fr; }
   .preview-wrap { position: static; }
@@ -564,4 +638,5 @@ pre {
   #nav { flex-direction: row; flex-wrap: wrap; }
   .landing { grid-template-columns: 1fr; gap: 20px; }
   .plan-cards { grid-template-columns: 1fr; }
+  .admin-grid { grid-template-columns: 1fr; }
 }

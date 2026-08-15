@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { verifyTransport } from '../mailer.js';
 import {
   SENDER_KINDS,
@@ -13,7 +13,7 @@ import {
 } from '../presets.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('senders'));
 
 const publicFields =
   'id, label, kind, provider, host, port, secure, username, from_name, from_email, sms_gateway, office_tenant_id, auth_mode, region, verified, created_at';

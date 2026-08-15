@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { parseLeads } from '../leads.js';
 import { sampleVars, renderTemplate } from '../placeholders.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('compose'));
 
 router.post('/parse', (req, res) => {
   const { text = '' } = req.body || {};

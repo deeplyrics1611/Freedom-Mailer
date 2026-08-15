@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth, newApiKey } from '../auth.js';
+import { requireAuth, requireFeature, newApiKey } from '../auth.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('apikeys'));
 
 router.get('/', (req, res) => {
   const keys = db

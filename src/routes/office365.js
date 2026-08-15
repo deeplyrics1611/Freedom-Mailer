@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { verifyTransport } from '../mailer.js';
 import { aiEnabled, runAi } from '../ai.js';
 import {
@@ -14,7 +14,7 @@ import {
 } from '../office365.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('office365'));
 
 const publicTenant =
   'id, label, tenant_id, tenant_domain, client_id, send_mode, default_mailbox, from_name, org_name, verified, created_at';

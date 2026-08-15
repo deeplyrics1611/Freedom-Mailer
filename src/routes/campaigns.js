@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { config } from '../config.js';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { isSuppressed, withUnsubscribeFooter, renderTemplate, newToken } from '../compliance.js';
 import { parseLeads, toSmsAddress } from '../leads.js';
 import { expandVars } from '../placeholders.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('campaigns'));
 
 function contactVars(row) {
   return expandVars({

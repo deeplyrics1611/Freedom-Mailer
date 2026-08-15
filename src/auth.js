@@ -5,6 +5,7 @@ import { customAlphabet } from 'nanoid';
 import { config } from './config.js';
 import { db } from './db.js';
 import { licenseStatus } from './license.js';
+import { parseFeatures } from './features.js';
 
 const keyAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const genKey = customAlphabet(keyAlphabet, 40);
@@ -59,6 +60,18 @@ export function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
+}
+
+export function requireFeature(name) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Missing token' });
+    if (req.user.role === 'admin') return next();
+    const features = parseFeatures(req.user.features);
+    if (features[name] === false) {
+      return res.status(403).json({ error: 'This tool is disabled on your account. Ask the admin to enable it.' });
+    }
+    next();
+  };
 }
 
 // API-key auth for the transactional sending API (X-API-Key header).

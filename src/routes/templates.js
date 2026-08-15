@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('campaigns'));
 
 router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM templates WHERE user_id = ? ORDER BY id DESC').all(req.user.id));

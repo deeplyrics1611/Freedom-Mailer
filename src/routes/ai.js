@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { requireAuth } from '../auth.js';
+import { requireAuth, requireFeature } from '../auth.js';
 import { aiEnabled, runAi } from '../ai.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('ai'));
 
 router.get('/status', (req, res) => {
   res.json({ enabled: aiEnabled() });
