@@ -159,6 +159,7 @@ const badge = (status) => {
     office365: 'ok', graph: 'ok', smtp_auth: 'warn',
     mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', api: 'ok',
     '3day': 'warn', monthly: 'ok', lifetime: 'ok', expired: 'err',
+    undeliverable: 'err', unknown: 'warn', drop: 'err', invalid: 'err',
   };
   return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
 };
@@ -304,29 +305,71 @@ views.links = async () => {
 
 views.deliverability = async () => {
   view(`<div class="page-head"><h1>Deliverability</h1></div>
-    <p class="sub">Debounce pasted addresses (syntax, disposable, role, typos) and sort them by <b>MX → provider / ISP</b>. Lookups are cached 24h. Paste only — no file import.</p>
-    <div class="notice">This checks DNS MX, not live mailbox RCPT. A domain with MX can still bounce a missing user. Dropping no-MX / disposable / junk syntax protects your sender reputation.</div>
+    <p class="sub">Paste addresses. The debouncer MX-checks <b>each email’s domain</b>: DNS MX, public IP of the mail host, then an SMTP 220 banner (no RCPT). That is whether the domain can receive mail — not whether the mailbox exists.</p>
+    <div class="notice">No mailbox probing (RCPT TO). A live MX can still bounce a missing user. Disposable, junk syntax, null MX, and dead MX hosts are dropped so they never hit your sender reputation.</div>
     <textarea id="deb-text" rows="8" placeholder="alex@gmail.com
 jordan@contoso.com
 info@northwind.example
 not-an-email"></textarea>
-    <p class="muted small" id="deb-hint">Checking waits 0.8s after you stop typing, or hit Run now.</p>
+    <div class="usage-bar deb-progress"><span id="deb-bar" style="width:0%"></span></div>
+    <p class="muted small" id="deb-hint">Paste a list, then Run. Checking starts after you pause typing, and walks every domain.</p>
     <div class="actions" style="margin:10px 0">
-      <button type="button" id="deb-run">Run now</button>
+      <button type="button" id="deb-run">Run MX check</button>
       <button type="button" class="secondary" id="deb-copy-keep">Copy keepers</button>
+      <button type="button" class="secondary" id="deb-copy-live">Copy deliverable</button>
       <button type="button" class="secondary" id="deb-copy-drop">Copy drops</button>
     </div>
     <div id="deb-sum" class="cards"></div>
     <h2>By provider / ISP</h2>
     <div id="deb-groups"></div>
-    <h2>Addresses</h2>
+    <h2>Each address</h2>
     <table id="deb-table"></table>`);
 
   let last = null;
   let timer = null;
+  let runId = 0;
 
   function copyText(s) {
     navigator.clipboard.writeText(s).then(() => toast('Copied')).catch(() => prompt('Copy:', s));
+  }
+
+  function extractEmails(text) {
+    const found = String(text || '').match(/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/gi) || [];
+    const seen = new Set();
+    const emails = [];
+    for (const raw of found) {
+      const e = raw.toLowerCase();
+      if (seen.has(e)) continue;
+      seen.add(e);
+      emails.push(e);
+    }
+    return emails.slice(0, 500);
+  }
+
+  function pack(results) {
+    const groups = {};
+    for (const r of results) {
+      const key = r.provider || 'other';
+      if (!groups[key]) {
+        groups[key] = { id: key, label: r.label || key, kind: r.kind || 'none', emails: [], keep: 0, drop: 0, deliverable: 0 };
+      }
+      groups[key].emails.push(r.email);
+      if (r.keep) groups[key].keep++;
+      else groups[key].drop++;
+      if (r.deliverable) groups[key].deliverable++;
+    }
+    const summary = {
+      total: results.length,
+      keep: results.filter((r) => r.keep).length,
+      drop: results.filter((r) => !r.keep).length,
+      risky: results.filter((r) => r.verdict === 'risky').length,
+      deliverable: results.filter((r) => r.deliverable).length,
+      undeliverable: results.filter((r) => r.verdict === 'undeliverable' || r.verdict === 'drop' || r.verdict === 'invalid').length,
+      mx_live: results.filter((r) => r.mx_live).length,
+      unknown: results.filter((r) => r.verdict === 'unknown').length,
+      providers: Object.keys(groups).length,
+    };
+    return { results, groups: Object.values(groups).sort((a, b) => b.emails.length - a.emails.length), summary };
   }
 
   function paint(data) {
@@ -335,17 +378,17 @@ not-an-email"></textarea>
     const card = (n, label) => `<div class="card"><div class="stat">${n}</div><div class="stat-label">${label}</div></div>`;
     $('deb-sum').innerHTML = [
       card(s.total, 'Checked'),
-      card(s.keep, 'Keep'),
-      card(s.risky, 'Risky (role / typo)'),
-      card(s.drop, 'Drop'),
-      card(s.providers, 'Providers'),
+      card(s.deliverable ?? s.keep, 'Deliverable MX'),
+      card(s.mx_live || 0, 'SMTP live'),
+      card(s.risky, 'Risky'),
+      card(s.undeliverable ?? s.drop, 'Undeliverable'),
     ].join('');
 
     $('deb-groups').innerHTML = data.groups.map((g) => `
       <div class="card" style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
           <div><b>${esc(g.label)}</b> ${badge(g.kind === 'none' ? 'failed' : g.kind === 'isp' ? 'warn' : 'ok')}
-            <div class="muted small">${g.kind} · ${g.emails.length} · keep ${g.keep} · drop ${g.drop}</div></div>
+            <div class="muted small">${g.kind} · ${g.emails.length} · keep ${g.keep} · drop ${g.drop}${g.deliverable ? ' · MX ' + g.deliverable : ''}</div></div>
           <button type="button" class="tiny secondary" data-copy="${esc(g.id)}">Copy</button>
         </div>
       </div>`).join('') || '<div class="muted">No groups.</div>';
@@ -355,39 +398,104 @@ not-an-email"></textarea>
       if (g) copyText(g.emails.join('\n'));
     }));
 
-    $('deb-table').innerHTML = `<tr><th>Email</th><th>Verdict</th><th>Provider</th><th>MX</th><th>Note</th></tr>` +
-      data.results.map((r) => `<tr>
+    $('deb-table').innerHTML = `<tr><th>Email</th><th>Verdict</th><th>Deliverable</th><th>Provider</th><th>MX</th><th>SMTP</th><th>Note</th></tr>` +
+      data.results.map((r) => {
+        const smtp = r.mx_live
+          ? (r.smtp?.banner || '220 live')
+          : r.smtp?.error === 'timeout'
+            ? 'probe timeout'
+            : r.smtp?.error || (r.deliverable ? 'DNS MX only' : '—');
+        const mx = (r.mx || []).slice(0, 2).join(', ') || r.mx_error || '—';
+        return `<tr>
         <td>${esc(r.email)}${r.suggestion ? `<div class="muted small">Did you mean ${esc(r.suggestion)}?</div>` : ''}</td>
-        <td>${badge(r.verdict === 'ok' ? 'confirmed' : r.verdict === 'risky' ? 'pending' : 'failed')} ${esc(r.verdict)}</td>
+        <td>${badge(r.verdict)} ${esc(r.verdict)}</td>
+        <td>${r.deliverable ? badge('confirmed') + ' yes' : badge('failed') + ' no'}${r.mx_live ? ' · live' : ''}</td>
         <td>${esc(r.label || r.provider)}</td>
-        <td class="mono small">${esc((r.mx || []).slice(0, 2).join(', ') || r.mx_error || '—')}</td>
+        <td class="mono small">${esc(mx)}</td>
+        <td class="muted small">${esc(smtp)}</td>
         <td class="muted small">${esc(r.reason || (r.flags || []).join(', '))}</td>
-      </tr>`).join('');
+      </tr>`;
+      }).join('');
   }
 
-  async function run() {
+  async function run(fresh = false) {
     const text = $('deb-text').value;
-    if (!text.trim()) return;
-    $('deb-hint').textContent = 'Looking up MX…';
+    const emails = extractEmails(text);
+    if (!emails.length) return toast('Paste at least one address', 'err');
+    const my = ++runId;
+    const byDomain = new Map();
+    for (const e of emails) {
+      const d = e.split('@')[1];
+      if (!byDomain.has(d)) byDomain.set(d, []);
+      byDomain.get(d).push(e);
+    }
+    const domains = [...byDomain.keys()];
+    const all = [];
+    let done = 0;
+    $('deb-bar').style.width = '0%';
+    $('deb-hint').textContent = `Checking MX for ${emails.length} address(es) across ${domains.length} domain(s)…`;
+
+    async function checkDomain(domain) {
+      if (my !== runId) return;
+      const list = byDomain.get(domain);
+      $('deb-hint').textContent = `MX ${done + 1}/${domains.length} · ${domain} · ${list.length} address(es)`;
+      const chunk = await api('/api/deliverability/check', {
+        method: 'POST',
+        body: { emails: list, probe: true, fresh },
+      });
+      if (my !== runId) return;
+      all.push(...(chunk.results || []));
+      done += 1;
+      $('deb-bar').style.width = `${Math.round((done / domains.length) * 100)}%`;
+      paint(pack(all));
+    }
+
+    const queue = [...domains];
+    const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+      while (queue.length) {
+        if (my !== runId) return;
+        const domain = queue.shift();
+        try { await checkDomain(domain); }
+        catch (err) {
+          if (my !== runId) return;
+          const list = byDomain.get(domain) || [];
+          all.push(...list.map((email) => ({
+            email, verdict: 'unknown', keep: false, deliverable: false, mx_live: false,
+            provider: 'timeout', label: 'Check failed', kind: 'none', mx: [], reason: err.message,
+          })));
+          done += 1;
+          $('deb-bar').style.width = `${Math.round((done / Math.max(domains.length, 1)) * 100)}%`;
+          paint(pack(all));
+        }
+      }
+    });
     try {
-      const data = await api('/api/deliverability/check', { method: 'POST', body: { text } });
-      $('deb-hint').textContent = `Done · ${data.summary.keep} keep / ${data.summary.drop} drop. Cached MX reused for 24h.`;
-      paint(data);
+      await Promise.all(workers);
+      if (my !== runId) return;
+      $('deb-hint').textContent = `Done · ${last?.summary.deliverable || 0} deliverable MX · ${last?.summary.mx_live || 0} SMTP live · ${last?.summary.drop || 0} drop.`;
     } catch (err) {
+      if (my !== runId) return;
       $('deb-hint').textContent = '';
       toast(err.message, 'err');
     }
   }
 
   $('deb-text').addEventListener('input', () => {
-    $('deb-hint').textContent = 'Waiting for you to finish pasting…';
+    const n = extractEmails($('deb-text').value).length;
+    $('deb-hint').textContent = n
+      ? `${n} address(es) — pausing to finish paste, then MX-checking each domain…`
+      : 'Paste a list, then Run.';
     clearTimeout(timer);
-    timer = setTimeout(run, 800);
+    timer = setTimeout(() => run(false), 1800);
   });
-  $('deb-run').addEventListener('click', () => { clearTimeout(timer); run(); });
+  $('deb-run').addEventListener('click', () => { clearTimeout(timer); run(true); });
   $('deb-copy-keep').addEventListener('click', () => {
     if (!last) return toast('Run a check first', 'err');
     copyText(last.results.filter((r) => r.keep).map((r) => r.email).join('\n'));
+  });
+  $('deb-copy-live').addEventListener('click', () => {
+    if (!last) return toast('Run a check first', 'err');
+    copyText(last.results.filter((r) => r.deliverable).map((r) => r.email).join('\n'));
   });
   $('deb-copy-drop').addEventListener('click', () => {
     if (!last) return toast('Run a check first', 'err');

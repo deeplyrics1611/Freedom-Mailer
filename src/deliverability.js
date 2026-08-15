@@ -1,4 +1,5 @@
 import { Resolver } from 'node:dns/promises';
+import net from 'node:net';
 import { parseLeads, isEmail } from './leads.js';
 
 const resolver = new Resolver();
@@ -204,26 +205,323 @@ function slug(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export async function lookupMx(domain, { timeoutMs = 4000 } = {}) {
+function withTimeout(promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(label || 'timeout')), timeoutMs)),
+  ]);
+}
+
+export function isRoutableIp(ip) {
+  const kind = net.isIP(ip);
+  if (kind === 4) {
+    const p = String(ip).split('.').map((n) => parseInt(n, 10));
+    if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
+    if (p[0] === 0 || p[0] === 10 || p[0] === 127 || p[0] >= 224) return false;
+    if (p[0] === 169 && p[1] === 254) return false;
+    if (p[0] === 192 && p[1] === 168) return false;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return false;
+    return true;
+  }
+  if (kind === 6) {
+    const s = String(ip).toLowerCase();
+    if (s === '::1' || s === '::') return false;
+    if (s.startsWith('fe80:') || s.startsWith('fc') || s.startsWith('fd')) return false;
+    if (s.startsWith('::ffff:')) return isRoutableIp(s.slice(7));
+    return true;
+  }
+  return false;
+}
+
+export async function lookupMx(domain, { timeoutMs = 8000 } = {}) {
   const d = String(domain || '').toLowerCase();
-  if (!d) return { mx: [], error: 'empty domain' };
+  if (!d) return { mx: [], records: [], null_mx: false, error: 'empty domain' };
   try {
-    const recs = await Promise.race([
-      resolver.resolveMx(d),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('MX timeout')), timeoutMs)),
-    ]);
-    const mx = (recs || [])
+    const recs = await withTimeout(resolver.resolveMx(d), timeoutMs, 'MX timeout');
+    const records = (recs || [])
       .sort((a, b) => a.priority - b.priority)
-      .map((r) => String(r.exchange || '').replace(/\.$/, '').toLowerCase())
-      .filter(Boolean);
-    return { mx, error: '' };
+      .map((r) => ({
+        exchange: String(r.exchange || '').replace(/\.$/, '').toLowerCase(),
+        priority: r.priority,
+      }));
+    const nullMx = records.length === 1 && (records[0].exchange === '' || records[0].exchange === '.');
+    const mx = nullMx ? [] : records.map((r) => r.exchange).filter(Boolean);
+    return { mx, records: nullMx ? records : records.filter((r) => r.exchange), null_mx: nullMx, error: nullMx ? 'null_mx' : '' };
   } catch (e) {
     const code = e.code || e.message || String(e);
     if (code === 'ENOTFOUND' || code === 'ENODATA' || /queryMx ENODATA|ENOTFOUND/i.test(String(code))) {
-      return { mx: [], error: 'no_mx' };
+      return { mx: [], records: [], null_mx: false, error: 'no_mx' };
     }
-    return { mx: [], error: String(code) };
+    return { mx: [], records: [], null_mx: false, error: String(code) };
   }
+}
+
+export async function lookupIps(host, { timeoutMs = 5000 } = {}) {
+  const h = String(host || '').replace(/\.$/, '').toLowerCase();
+  if (!h) return [];
+  try {
+    const [v4, v6] = await withTimeout(
+      Promise.all([resolver.resolve4(h).catch(() => []), resolver.resolve6(h).catch(() => [])]),
+      timeoutMs,
+      'IP timeout'
+    );
+    return [...new Set([...(v4 || []), ...(v6 || [])])];
+  } catch {
+    return [];
+  }
+}
+
+export function probeSmtpBanner(host, { port = 25, timeoutMs = 3000 } = {}) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    let buf = '';
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.write('QUIT\r\n');
+      } catch {
+        /* closed */
+      }
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.on('timeout', () => finish({ ok: false, error: 'timeout', host, port, refused: false }));
+    socket.on('error', (err) => {
+      const code = err.code || err.message || String(err);
+      finish({
+        ok: false,
+        error: String(code),
+        host,
+        port,
+        refused: code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH',
+      });
+    });
+    socket.on('data', (chunk) => {
+      buf += chunk.toString('ascii');
+      const line = (buf.split(/\r?\n/).find((l) => l.trim()) || '').trim();
+      if (/^\d{3}\b/.test(line)) {
+        const ok = /^220\b/.test(line);
+        finish({ ok, banner: line.slice(0, 180), host, port, error: ok ? '' : line.slice(0, 80), refused: false });
+      }
+    });
+  });
+}
+
+export function normalizeMxRecord(rec) {
+  if (!rec || typeof rec !== 'object') {
+    return {
+      mx: [],
+      records: [],
+      error: 'empty',
+      deliverable: false,
+      null_mx: false,
+      implicit: false,
+      smtp: null,
+      mx_live: false,
+    };
+  }
+  const mx = Array.isArray(rec.mx) ? rec.mx.map((h) => String(h || '').toLowerCase()).filter(Boolean) : [];
+  const smtp = rec.smtp || null;
+  const timeout = rec.error === 'MX timeout' || rec.error === 'timeout';
+  const deliverable = rec.deliverable !== undefined ? !!rec.deliverable : mx.length > 0 && !rec.null_mx && !timeout;
+  return {
+    mx,
+    records: rec.records || mx.map((exchange, i) => ({ exchange, priority: i, ips: rec.ips || [] })),
+    error: rec.error || '',
+    null_mx: !!rec.null_mx,
+    implicit: !!rec.implicit,
+    smtp,
+    deliverable,
+    mx_live: rec.mx_live !== undefined ? !!rec.mx_live : !!(smtp && smtp.ok),
+  };
+}
+
+export async function inspectMailDomain(domain, { probe = true, lookupMxFn = lookupMx, lookupIpsFn = lookupIps, probeFn = probeSmtpBanner } = {}) {
+  const d = String(domain || '').toLowerCase();
+  const dns = await lookupMxFn(d);
+  if (dns.null_mx) {
+    return {
+      mx: [],
+      records: dns.records || [],
+      error: 'null_mx',
+      null_mx: true,
+      implicit: false,
+      smtp: null,
+      deliverable: false,
+      mx_live: false,
+    };
+  }
+  if (dns.error === 'MX timeout') {
+    return {
+      mx: [],
+      records: [],
+      error: 'MX timeout',
+      null_mx: false,
+      implicit: false,
+      smtp: null,
+      deliverable: false,
+      mx_live: false,
+    };
+  }
+
+  let records = (dns.records || []).filter((r) => r.exchange && r.exchange !== '.');
+  let implicit = false;
+  if (!records.length) {
+    const ips = (await lookupIpsFn(d)).filter(isRoutableIp);
+    if (ips.length) {
+      implicit = true;
+      records = [{ exchange: d, priority: 0, ips }];
+    } else {
+      return {
+        mx: [],
+        records: [],
+        error: dns.error || 'no_mx',
+        null_mx: false,
+        implicit: false,
+        smtp: null,
+        deliverable: false,
+        mx_live: false,
+      };
+    }
+  } else {
+    for (const rec of records) {
+      rec.ips = ((await lookupIpsFn(rec.exchange)) || []).filter(isRoutableIp);
+    }
+    const withIps = records.filter((r) => r.ips.length);
+    if (!withIps.length) {
+      return {
+        mx: records.map((r) => r.exchange),
+        records,
+        error: 'mx_host_dead',
+        null_mx: false,
+        implicit: false,
+        smtp: null,
+        deliverable: false,
+        mx_live: false,
+      };
+    }
+  }
+
+  let smtp = null;
+  if (probe) {
+    const hosts = (records.filter((r) => r.ips?.length).concat(records)).filter(
+      (r, i, arr) => arr.findIndex((x) => x.exchange === r.exchange) === i
+    );
+    for (const rec of hosts.slice(0, 3)) {
+      smtp = await probeFn(rec.exchange);
+      if (smtp?.ok) break;
+      // Timeouts usually mean outbound port 25 is filtered — don't burn 3 hosts.
+      if (!smtp?.refused) break;
+    }
+  }
+
+  const mx = records.map((r) => r.exchange);
+  return {
+    mx,
+    records,
+    error: implicit ? 'implicit_mx' : '',
+    null_mx: false,
+    implicit,
+    smtp,
+    deliverable: true,
+    mx_live: !!(smtp && smtp.ok),
+  };
+}
+
+export function applyMxToLocal(local, rec) {
+  if (local.verdict === 'invalid') {
+    return {
+      ...local,
+      provider: 'invalid',
+      label: 'Invalid',
+      kind: 'none',
+      mx: [],
+      mx_error: '',
+      deliverable: false,
+      mx_live: false,
+      implicit: false,
+    };
+  }
+  const mx = normalizeMxRecord(rec);
+  const cls = classifyMx(local.domain, mx.mx);
+  let verdict = local.verdict;
+  let reason = local.reason;
+  let provider = cls.provider;
+  let label = cls.label;
+  let kind = cls.kind;
+  let deliverable = mx.deliverable;
+  let keep = true;
+
+  if (local.flags.includes('disposable')) {
+    provider = 'disposable';
+    label = 'Disposable';
+    kind = 'none';
+    verdict = 'drop';
+    reason = 'Disposable address';
+    deliverable = false;
+    keep = false;
+  } else if (mx.null_mx) {
+    verdict = 'undeliverable';
+    reason = 'Null MX — this domain refuses mail';
+    provider = 'no_mx';
+    label = 'Null MX';
+    kind = 'none';
+    deliverable = false;
+    keep = false;
+  } else if (mx.error === 'MX timeout') {
+    verdict = 'unknown';
+    reason = 'MX lookup timed out — run again';
+    provider = 'timeout';
+    label = 'MX timeout';
+    kind = 'none';
+    deliverable = false;
+    keep = false;
+  } else if (!mx.mx.length || mx.error === 'no_mx' || mx.error === 'mx_host_dead') {
+    verdict = 'undeliverable';
+    reason = local.suggestion
+      ? `No live MX — possible typo of ${local.suggestion}`
+      : mx.error === 'mx_host_dead'
+        ? 'MX hosts do not resolve on the public internet'
+        : 'No MX record — will bounce';
+    provider = 'no_mx';
+    label = mx.error === 'mx_host_dead' ? 'Dead MX' : 'No MX';
+    kind = 'none';
+    deliverable = false;
+    keep = false;
+  } else if (mx.implicit) {
+    if (verdict === 'ok') verdict = 'risky';
+    reason = reason || 'No MX; mail would use the domain A record (legacy, often bounces)';
+  } else if (mx.mx_live) {
+    reason = reason || 'MX live (SMTP 220)';
+  } else if (mx.smtp && mx.smtp.refused && !mx.mx_live) {
+    if (verdict === 'ok') verdict = 'risky';
+    reason = reason || 'MX found but SMTP banner refused — domain may still accept mail';
+  } else if (mx.smtp && mx.smtp.error === 'timeout') {
+    reason = reason || 'MX found; SMTP probe timed out (port 25 is often blocked from cloud hosts)';
+  } else {
+    reason = reason || 'MX found — domain can receive mail';
+  }
+
+  keep = verdict === 'ok' || verdict === 'risky';
+  return {
+    ...local,
+    verdict,
+    reason,
+    keep,
+    deliverable,
+    mx_live: mx.mx_live,
+    implicit: mx.implicit,
+    provider,
+    label,
+    kind,
+    mx: mx.mx,
+    mx_records: mx.records,
+    mx_error: mx.error || '',
+    smtp: mx.smtp,
+  };
 }
 
 export function parseEmailList(text) {
@@ -256,69 +554,39 @@ function mapPool(items, limit, fn) {
   return Promise.all(Array.from({ length: n }, worker)).then(() => out);
 }
 
-export async function debounceEmails(text, { lookup, max = 400 } = {}) {
-  const emails = parseEmailList(text).slice(0, max);
+export async function debounceEmails(text, { lookup, max = 500, probe = true, inspect, onDomain } = {}) {
+  const emails = (
+    Array.isArray(text)
+      ? [...new Set(text.map((e) => String(e || '').toLowerCase().trim()).filter(Boolean))]
+      : parseEmailList(text)
+  ).slice(0, max);
   const locals = emails.map(inspectLocal);
   const domains = [...new Set(locals.filter((r) => r.verdict !== 'invalid').map((r) => r.domain))];
   const mxByDomain = {};
-  const getMx = lookup || lookupMx;
-  await mapPool(domains, 8, async (domain) => {
-    const rec = await getMx(domain);
+  const inspectFn =
+    inspect ||
+    (async (domain) => {
+      if (lookup) return normalizeMxRecord(await lookup(domain));
+      return inspectMailDomain(domain, { probe });
+    });
+  await mapPool(domains, 3, async (domain) => {
+    const rec = await inspectFn(domain);
     mxByDomain[domain] = rec;
+    if (onDomain) onDomain(domain, rec);
   });
 
-  const results = locals.map((r) => {
-    if (r.verdict === 'invalid') {
-      return { ...r, provider: 'invalid', label: 'Invalid', kind: 'none', mx: [], mx_error: '' };
-    }
-    const rec = mxByDomain[r.domain] || { mx: [], error: '' };
-    const cls = classifyMx(r.domain, rec.mx);
-    let verdict = r.verdict;
-    let reason = r.reason;
-    let provider = cls.provider;
-    let label = cls.label;
-    let kind = cls.kind;
-    if (r.flags.includes('disposable')) {
-      provider = 'disposable';
-      label = 'Disposable';
-      kind = 'none';
-      verdict = 'drop';
-      reason = 'Disposable address';
-    } else if (!rec.mx.length) {
-      verdict = 'drop';
-      reason = r.suggestion
-        ? `No MX — possible typo of ${r.suggestion}`
-        : rec.error === 'MX timeout'
-          ? 'MX lookup timed out'
-          : 'No MX record — will bounce';
-      if (provider !== 'no_mx') {
-        provider = 'no_mx';
-        label = 'No MX';
-        kind = 'none';
-      }
-    }
-    return {
-      ...r,
-      verdict,
-      reason,
-      keep: verdict === 'ok' || verdict === 'risky',
-      provider,
-      label,
-      kind,
-      mx: rec.mx,
-      mx_error: rec.error || '',
-    };
-  });
+  const results = locals.map((r) => applyMxToLocal(r, mxByDomain[r.domain]));
 
   const groups = {};
   for (const r of results) {
     const key = r.provider || 'other';
     if (!groups[key]) {
-      groups[key] = { id: key, label: r.label || key, kind: r.kind || 'none', emails: [], keep: 0, drop: 0 };
+      groups[key] = { id: key, label: r.label || key, kind: r.kind || 'none', emails: [], keep: 0, drop: 0, deliverable: 0 };
     }
     groups[key].emails.push(r.email);
     if (r.keep) groups[key].keep++;
     else groups[key].drop++;
+    if (r.deliverable) groups[key].deliverable++;
   }
 
   const summary = {
@@ -326,7 +594,12 @@ export async function debounceEmails(text, { lookup, max = 400 } = {}) {
     keep: results.filter((r) => r.keep).length,
     drop: results.filter((r) => !r.keep).length,
     risky: results.filter((r) => r.verdict === 'risky').length,
+    deliverable: results.filter((r) => r.deliverable).length,
+    undeliverable: results.filter((r) => r.verdict === 'undeliverable' || r.verdict === 'drop' || r.verdict === 'invalid').length,
+    mx_live: results.filter((r) => r.mx_live).length,
+    unknown: results.filter((r) => r.verdict === 'unknown').length,
     providers: Object.keys(groups).length,
+    domains: domains.length,
   };
 
   const sorted = Object.values(groups).sort((a, b) => b.emails.length - a.emails.length);

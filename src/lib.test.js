@@ -230,7 +230,57 @@ describe('deliverability', () => {
     assert.equal(out.summary.total, 3);
     assert.ok(out.groups.some((g) => g.id === 'gmail'));
     assert.ok(out.groups.some((g) => g.id === 'microsoft365'));
-    assert.ok(out.results.find((r) => r.email === 'c@no-mx.test').verdict === 'drop');
+    assert.equal(out.results.find((r) => r.email === 'c@no-mx.test').verdict, 'undeliverable');
+    assert.equal(out.results.find((r) => r.email === 'a@gmail.com').deliverable, true);
+    assert.equal(out.summary.deliverable, 2);
+  });
+
+  it('marks each address from MX: live, null MX, dead host, timeout', async () => {
+    const { applyMxToLocal, inspectLocal, inspectMailDomain, isRoutableIp } = await import('./deliverability.js');
+    assert.equal(isRoutableIp('8.8.8.8'), true);
+    assert.equal(isRoutableIp('127.0.0.1'), false);
+    assert.equal(isRoutableIp('10.0.0.4'), false);
+
+    const gmail = applyMxToLocal(inspectLocal('alex@gmail.com'), {
+      mx: ['gmail-smtp-in.l.google.com'],
+      deliverable: true,
+      mx_live: true,
+      smtp: { ok: true, banner: '220 mx.google.com ESMTP' },
+    });
+    assert.equal(gmail.verdict, 'ok');
+    assert.equal(gmail.deliverable, true);
+    assert.equal(gmail.mx_live, true);
+
+    const nullMx = applyMxToLocal(inspectLocal('x@refuses.example'), { mx: [], null_mx: true, deliverable: false });
+    assert.equal(nullMx.verdict, 'undeliverable');
+    assert.equal(nullMx.keep, false);
+
+    const dead = applyMxToLocal(inspectLocal('x@ghost.example'), { mx: ['mx.ghost.example'], error: 'mx_host_dead', deliverable: false });
+    assert.equal(dead.verdict, 'undeliverable');
+
+    const timed = applyMxToLocal(inspectLocal('x@slow.example'), { mx: [], error: 'MX timeout', deliverable: false });
+    assert.equal(timed.verdict, 'unknown');
+
+    const live = await inspectMailDomain('acme.com', {
+      lookupMxFn: async () => ({
+        mx: ['mx.acme.com'],
+        records: [{ exchange: 'mx.acme.com', priority: 10 }],
+        null_mx: false,
+        error: '',
+      }),
+      lookupIpsFn: async () => ['203.0.113.10'],
+      probeFn: async () => ({ ok: true, banner: '220 mx.acme.com ESMTP', host: 'mx.acme.com', port: 25 }),
+    });
+    assert.equal(live.deliverable, true);
+    assert.equal(live.mx_live, true);
+
+    const implicit = await inspectMailDomain('legacy.example', {
+      lookupMxFn: async () => ({ mx: [], records: [], null_mx: false, error: 'no_mx' }),
+      lookupIpsFn: async () => ['198.51.100.8'],
+      probeFn: async () => ({ ok: false, error: 'timeout', host: 'legacy.example', port: 25 }),
+    });
+    assert.equal(implicit.implicit, true);
+    assert.equal(implicit.deliverable, true);
   });
 });
 
