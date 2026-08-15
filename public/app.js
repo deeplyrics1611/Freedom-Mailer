@@ -137,6 +137,7 @@ const NAV = [
   ['office365', '🏢 Office 365'],
   ['links', '🔗 Links'],
   ['deliverability', '📬 Deliverability'],
+  ['warmup', '🔥 Warmup'],
   ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
@@ -156,6 +157,7 @@ const ROUTE_FEATURE = {
   office365: 'office365',
   links: 'links',
   deliverability: 'deliverability',
+  warmup: 'warmup',
   senders: 'senders',
   lists: 'campaigns',
   contacts: 'campaigns',
@@ -213,6 +215,7 @@ const badge = (status) => {
     office365: 'ok', graph: 'ok', smtp_auth: 'warn',
     mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', gcp: 'ok', api: 'ok',
     '3day': 'warn', monthly: 'ok', lifetime: 'ok', expired: 'err',
+    active: 'ok', paused: 'warn', warmup: 'ok',
     undeliverable: 'err', unknown: 'warn', drop: 'err', invalid: 'err',
   };
   return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
@@ -243,6 +246,7 @@ views.dashboard = async () => {
     card(s.failed, 'Failed'),     card(s.suppressed, 'Suppressed'),
     card(s.office_tenants || 0, 'Office 365 tenants'),
     card(s.short_links || 0, 'Tracking links'),
+    card(s.warmup_active || 0, 'Warmup live'),
     card(s.sms_enabled ? 'On' : 'Off', 'Twilio SMS'),
     card(s.ai_enabled ? 'On' : 'Local', 'AI help'),
   ].join('');
@@ -566,6 +570,147 @@ not-an-email"></textarea>
     if (!last) return toast('Run a check first', 'err');
     copyText(last.results.filter((r) => !r.keep).map((r) => r.email).join('\n'));
   });
+};
+
+views.warmup = async () => {
+  const data = await api('/api/warmup');
+  const senders = data.senders || [];
+  const presets = data.presets || [];
+  view(`<div class="page-head"><h1>Mailbox warmup</h1></div>
+    <p class="sub">Age a mailbox you own by sending a few short notes a day to seed inboxes <b>you control</b>. Volume ramps slowly. This is not a campaign and not a purchased-list trick.</p>
+    <div class="notice">
+      Warmup only works when SPF / DKIM / DMARC already pass on the sending domain, and when seeds are mailboxes you (or a teammate who agreed) can open and reply from.
+      Reply from those inboxes — ISPs score conversations, not blasts. Paste-in leads and random .su/.ru names do not belong here.
+    </div>
+
+    <section class="card admin-panel" style="margin:16px 0">
+      <h2>Start a plan</h2>
+      <form id="wu-form" class="form-grid">
+        <div class="field"><label>Sender mailbox</label>
+          <select name="sender_id" id="wu-sender" required>
+            <option value="">Select…</option>
+            ${senders.map((s) => `<option value="${s.id}">${esc(s.label)} · ${esc(s.from_email)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Ramp</label>
+          <select name="preset" id="wu-preset">
+            ${presets.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Plan name</label><input name="name" placeholder="Northwind hello@"></div>
+        <div class="field full"><label>Seed inboxes (one per line — yours or people who agreed)</label>
+          <textarea name="seeds" id="wu-seeds" rows="5" required placeholder="alex@yourbrand.com
+jordan@yourbrand.com"></textarea>
+        </div>
+        <div class="check full"><input type="checkbox" name="owned_ok" id="wu-ok" required>
+          <span>These seeds are mailboxes I control, or people who agreed to receive these notes.</span></div>
+        <div class="actions full">
+          <button type="submit">Create plan</button>
+          <button type="button" class="secondary" id="wu-fill-senders">Use my other senders as seeds</button>
+        </div>
+      </form>
+      <p class="muted small" id="wu-preset-blurb"></p>
+      ${senders.length ? '' : '<p class="error">Add a sender mailbox first (Senders), then come back.</p>'}
+    </section>
+
+    <div id="wu-plans"></div>`);
+
+  function presetBlurb() {
+    const p = presets.find((x) => x.id === $('wu-preset').value);
+    $('wu-preset-blurb').textContent = p ? `${p.blurb} Starts at ${p.start_per_day}/day, +${p.increase_per_day}/day, cap ${p.max_per_day}.` : '';
+  }
+  $('wu-preset').addEventListener('change', presetBlurb);
+  presetBlurb();
+
+  $('wu-fill-senders').addEventListener('click', () => {
+    const sid = $('wu-sender').value;
+    const extras = senders.filter((s) => String(s.id) !== String(sid)).map((s) => s.from_email);
+    if (!extras.length) return toast('Add a second sender mailbox to seed against, or paste other inboxes you own', 'err');
+    const cur = $('wu-seeds').value.trim();
+    $('wu-seeds').value = [cur, ...extras].filter(Boolean).join('\n');
+  });
+
+  $('wu-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    b.owned_ok = $('wu-ok').checked;
+    b.sender_id = parseInt(b.sender_id, 10);
+    try {
+      await api('/api/warmup', { method: 'POST', body: b });
+      toast('Warmup plan created — start it when seeds can reply');
+      views.warmup();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  const pct = (used, cap) => Math.min(100, Math.round((used / Math.max(cap || 1, 1)) * 100));
+  $('wu-plans').innerHTML = (data.plans || []).map((p) => {
+    const st = p.stats || {};
+    const bar = pct(st.today_placed || 0, p.target_today || 1);
+    const seeds = (p.seeds || []).map((s) => `<li>
+        <code>${esc(s.email)}</code>
+        ${s.reply_count ? `<span class="muted small">${s.reply_count} ${s.reply_count === 1 ? 'reply' : 'replies'}</span>` : ''}
+        <button type="button" class="tiny secondary" data-reply="${p.id}" data-seed="${s.id}">Log reply</button>
+        <button type="button" class="tiny danger" data-dropseed="${p.id}" data-seed="${s.id}">Remove</button>
+      </li>`).join('');
+    return `<article class="client-card">
+      <header>
+        <div>
+          <b>${esc(p.name || p.sender_email || 'Warmup')}</b>
+          ${badge(p.status)} ${p.at_cap ? badge('ok') + ' at cap' : ''}
+          <div class="muted small">${esc(p.sender_email || '')}${p.sender_verified ? ' · verified' : ' · verify the sender'}</div>
+        </div>
+        <div class="muted small">Day ${p.progress_days || 0} · ${p.start_per_day}+${p.increase_per_day}/day · cap ${p.max_per_day}</div>
+      </header>
+      <div class="usage-bar"><span style="width:${bar}%"></span></div>
+      <div class="muted small">Today ${st.today_placed || 0} / ${p.target_today} queued · ${st.today_sent || 0} sent · ${st.today_failed || 0} failed · ${st.replies || 0} replies logged · ${st.sent || 0} sent all-time</div>
+      ${p.pause_reason ? `<p class="error">${esc(p.pause_reason)}</p>` : ''}
+      <div class="row client-actions" style="margin-top:10px">
+        ${p.status === 'active'
+          ? `<button class="tiny secondary" data-wu="${p.id}" data-status="paused">Pause</button>`
+          : `<button class="tiny" data-wu="${p.id}" data-status="active">Start / resume</button>`}
+        <button class="tiny danger" data-wudel="${p.id}">Delete</button>
+      </div>
+      <h3 class="muted small" style="margin:12px 0 4px">Seeds</h3>
+      <ul class="wu-seeds">${seeds || '<li class="muted">No seeds</li>'}</ul>
+      <form class="row" data-addseeds="${p.id}" style="margin-top:8px;gap:8px;flex-wrap:wrap">
+        <input name="seeds" placeholder="more@yourbrand.com" style="flex:1;min-width:180px">
+        <button type="submit" class="tiny secondary">Add seeds</button>
+      </form>
+    </article>`;
+  }).join('') || '<p class="muted">No warmup plans yet.</p>';
+
+  $('wu-plans').querySelectorAll('[data-wu]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/warmup/${b.dataset.wu}`, { method: 'PATCH', body: { status: b.dataset.status } });
+      toast(b.dataset.status === 'active' ? 'Warmup running' : 'Warmup paused');
+      views.warmup();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
+  $('wu-plans').querySelectorAll('[data-wudel]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Delete this warmup plan? Queued notes stay in the message log until they send or fail.')) return;
+    await api(`/api/warmup/${b.dataset.wudel}`, { method: 'DELETE' });
+    views.warmup();
+  }));
+  $('wu-plans').querySelectorAll('[data-reply]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/warmup/${b.dataset.reply}/replies`, { method: 'POST', body: { seed_id: parseInt(b.dataset.seed, 10) } });
+      toast('Reply logged');
+      views.warmup();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
+  $('wu-plans').querySelectorAll('[data-dropseed]').forEach((b) => b.addEventListener('click', async () => {
+    await api(`/api/warmup/${b.dataset.dropseed}/seeds/${b.dataset.seed}`, { method: 'DELETE' });
+    views.warmup();
+  }));
+  $('wu-plans').querySelectorAll('[data-addseeds]').forEach((form) => form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const seeds = new FormData(form).get('seeds');
+    try {
+      await api(`/api/warmup/${form.dataset.addseeds}/seeds`, { method: 'POST', body: { seeds, owned_ok: true } });
+      toast('Seeds added');
+      views.warmup();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
 };
 
 function senderOption(s) {
@@ -1606,7 +1751,7 @@ views.messages = async () => {
   $('refresh').addEventListener('click', views.messages);
   const rows = await api('/api/messages');
   $('m-table').innerHTML = `<tr><th>To</th><th>Channel</th><th>Subject</th><th>Status</th><th>When</th></tr>` +
-    (rows.map((m) => `<tr><td>${esc(m.to_address)}</td><td>${m.channel}</td>
+    (rows.map((m) => `<tr><td>${esc(m.to_address)}</td><td>${m.channel}${m.source === 'warmup' ? ' · warmup' : ''}</td>
       <td>${esc(m.subject || '')}${m.error ? `<div class="muted small">${esc(m.error)}</div>` : ''}</td>
       <td>${badge(m.status)}</td><td class="muted small">${esc((m.sent_at || m.created_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`).join('')
       || `<tr><td colspan="5" class="muted">No messages yet.</td></tr>`);

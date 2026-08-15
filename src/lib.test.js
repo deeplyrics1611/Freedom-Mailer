@@ -23,6 +23,16 @@ import {
   usesHttpApi,
 } from './providers.js';
 import { computeExpiry, extendExpiry, licenseStatus } from './license.js';
+import {
+  dailyTarget,
+  bounceShouldPause,
+  spreadTimes,
+  parseSeeds,
+  pickNote,
+  renderNote,
+  warmupPreset,
+  WARMUP_NOTES,
+} from './warmup.js';
 
 describe('parseLeads', () => {
   it('reads one email per line', () => {
@@ -406,6 +416,7 @@ describe('features', () => {
     const all = parseFeatures('');
     assert.equal(all.compose, true);
     assert.equal(all.office365, true);
+    assert.equal(all.warmup, true);
     const off = parseFeatures('{"compose":false,"ai":false}');
     assert.equal(off.compose, false);
     assert.equal(off.ai, false);
@@ -419,6 +430,7 @@ describe('features', () => {
     const mailer = applyPreset('mailer');
     assert.equal(mailer.compose, true);
     assert.equal(mailer.senders, true);
+    assert.equal(mailer.warmup, true);
     assert.equal(mailer.campaigns, false);
     assert.equal(mailer.apikeys, false);
     const lock = applyPreset('lockdown');
@@ -464,5 +476,42 @@ describe('license', () => {
       ).ok,
       true
     );
+  });
+});
+
+describe('warmup', () => {
+  it('ramps volume and caps', () => {
+    assert.equal(dailyTarget({ start_per_day: 5, increase_per_day: 3, max_per_day: 40, progress_days: 0 }), 5);
+    assert.equal(dailyTarget({ start_per_day: 5, increase_per_day: 3, max_per_day: 40, progress_days: 5 }), 20);
+    assert.equal(dailyTarget({ start_per_day: 5, increase_per_day: 3, max_per_day: 40, progress_days: 20 }), 40);
+    assert.equal(warmupPreset('gentle').start_per_day, 3);
+    assert.equal(warmupPreset('nope').id, 'standard');
+  });
+
+  it('pauses on a real bounce cluster, not a single fail', () => {
+    assert.equal(bounceShouldPause({ sent: 10, failed: 1 }), false);
+    assert.equal(bounceShouldPause({ sent: 10, failed: 3 }), true);
+    assert.equal(bounceShouldPause({ sent: 0, failed: 2 }), false);
+  });
+
+  it('spreads sends and parses owned seeds', () => {
+    const now = new Date('2026-08-15T12:00:00.000Z');
+    const times = spreadTimes(3, now);
+    assert.equal(times.length, 3);
+    assert.ok(times[0] < times[1]);
+    assert.equal(spreadTimes(0).length, 0);
+    const parsed = parseSeeds('Alex <alex@northwind.com>\nalex@northwind.com\nbad line');
+    assert.equal(parsed.total, 1);
+    assert.equal(parsed.seeds[0].email, 'alex@northwind.com');
+  });
+
+  it('renders a short note with no tracking link', () => {
+    const note = pickNote(1, 2, 3);
+    assert.ok(WARMUP_NOTES.includes(note));
+    const rendered = renderNote(note, { email: 'alex@northwind.com', name: 'Alex' });
+    assert.ok(rendered.subject);
+    assert.ok(rendered.text.includes('Alex') || rendered.subject.includes('Alex') || rendered.text.length > 10);
+    assert.equal(/https?:\/\//i.test(rendered.text), false);
+    assert.equal(/unsubscribe|docusign|microsoft|adobe/i.test(rendered.text), false);
   });
 });

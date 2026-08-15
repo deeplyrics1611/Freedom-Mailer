@@ -5,6 +5,7 @@ export const CLIENT_FEATURES = [
   { id: 'campaigns', label: 'Campaigns & lists' },
   { id: 'links', label: 'Tracking links' },
   { id: 'deliverability', label: 'Deliverability' },
+  { id: 'warmup', label: 'Mailbox warmup' },
   { id: 'ai', label: 'AI help' },
   { id: 'apikeys', label: 'API keys' },
 ];
@@ -17,12 +18,12 @@ export const FEATURE_PRESETS = [
   {
     id: 'mailer',
     label: 'Mailer only',
-    features: { ...allOff, compose: true, senders: true, office365: true, deliverability: true, ai: true },
+    features: { ...allOff, compose: true, senders: true, office365: true, deliverability: true, warmup: true, ai: true },
   },
   {
     id: 'campaigns',
     label: 'Campaigns',
-    features: { ...allOff, compose: true, senders: true, campaigns: true, links: true, deliverability: true, ai: true },
+    features: { ...allOff, compose: true, senders: true, campaigns: true, links: true, deliverability: true, warmup: true, ai: true },
   },
   { id: 'lockdown', label: 'Lockdown', features: { ...allOff } },
 ];

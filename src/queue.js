@@ -6,6 +6,7 @@ import { isSuppressed, suppress } from './compliance.js';
 import { isLicenseActive } from './license.js';
 import { boolSetting } from './settings.js';
 import { linkBaseFor } from './links.js';
+import { queueDueWarmup } from './warmup.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -20,6 +21,7 @@ function claimBatch(limit) {
       `SELECT * FROM messages
        WHERE status = 'queued'
          AND (attempts < ?)
+         AND (not_before IS NULL OR not_before <= datetime('now'))
        ORDER BY created_at ASC
        LIMIT ?`
     )
@@ -101,6 +103,7 @@ async function tick() {
   if (running) return;
   running = true;
   try {
+    queueDueWarmup();
     const batch = claimBatch(perTickBudget());
     for (const msg of batch) {
       await processMessage(msg);

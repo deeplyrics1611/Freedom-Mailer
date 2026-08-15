@@ -643,7 +643,8 @@ pre {
   gap: 4px;
 }
 .dns-record code { font-size: 13px; }
-.notice.error-box { border-color: var(--err); }
+.wu-seeds { list-style: none; padding: 0; margin: 0; }
+.wu-seeds li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; }
 
 @media (max-width: 1100px) {
   .compose { grid-template-columns: 1fr; }

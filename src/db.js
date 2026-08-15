@@ -165,6 +165,8 @@ addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom1', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom2', "TEXT NOT NULL DEFAULT ''");
 addColumn('campaigns', 'channel', "TEXT NOT NULL DEFAULT 'email'");
+addColumn('messages', 'warmup_plan_id', 'INTEGER');
+addColumn('messages', 'not_before', 'TEXT');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS office_tenants (
@@ -223,6 +225,38 @@ CREATE TABLE IF NOT EXISTS admin_events (
   created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_admin_events ON admin_events(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS warmup_plans (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  sender_id          INTEGER NOT NULL REFERENCES senders(id) ON DELETE CASCADE,
+  name               TEXT NOT NULL DEFAULT '',
+  status             TEXT NOT NULL DEFAULT 'paused',
+  start_per_day      INTEGER NOT NULL DEFAULT 5,
+  increase_per_day   INTEGER NOT NULL DEFAULT 3,
+  max_per_day        INTEGER NOT NULL DEFAULT 40,
+  progress_days      INTEGER NOT NULL DEFAULT 0,
+  started_at         TEXT,
+  paused_at          TEXT,
+  last_queued_on     TEXT,
+  pause_reason       TEXT NOT NULL DEFAULT '',
+  created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS warmup_seeds (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id      INTEGER NOT NULL REFERENCES warmup_plans(id) ON DELETE CASCADE,
+  email        TEXT NOT NULL,
+  name         TEXT NOT NULL DEFAULT '',
+  kind         TEXT NOT NULL DEFAULT 'owned',
+  active       INTEGER NOT NULL DEFAULT 1,
+  reply_count  INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(plan_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_warmup_user ON warmup_plans(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_warmup_msgs ON messages(warmup_plan_id, created_at);
 
 CREATE TABLE IF NOT EXISTS mx_cache (
   domain     TEXT PRIMARY KEY,

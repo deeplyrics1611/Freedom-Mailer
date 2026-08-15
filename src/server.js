@@ -24,6 +24,7 @@ import office365Routes from './routes/office365.js';
 import linkRoutes from './routes/links.js';
 import deliverabilityRoutes from './routes/deliverability.js';
 import adminRoutes from './routes/admin.js';
+import warmupRoutes from './routes/warmup.js';
 import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,6 +106,8 @@ app.get('/api/stats', requireAuth, (req, res) => {
     suppressed: one('SELECT COUNT(*) n FROM suppressions WHERE user_id = ?'),
     office_tenants: one('SELECT COUNT(*) n FROM office_tenants WHERE user_id = ?'),
     short_links: one('SELECT COUNT(*) n FROM short_links WHERE user_id = ?'),
+    warmup_plans: one('SELECT COUNT(*) n FROM warmup_plans WHERE user_id = ?'),
+    warmup_active: one("SELECT COUNT(*) n FROM warmup_plans WHERE user_id = ? AND status = 'active'"),
     sms_enabled: smsEnabled(),
     ai_enabled: aiEnabled(),
   });
@@ -137,6 +140,7 @@ app.use('/api/leads', leadRoutes);
 app.use('/api/office365', office365Routes);
 app.use('/api/links', linkRoutes);
 app.use('/api/deliverability', deliverabilityRoutes);
+app.use('/api/warmup', warmupRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);
