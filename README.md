@@ -19,7 +19,8 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
   - **SMTP → SMS** — short text emailed to `number@carrier-gateway`
   - **Office 365 tenant** — Entra app + Graph `sendMail`, or SMTP AUTH on `smtp.office365.com`
 - **Office 365 admin** — tenant ID, app registration, mailboxes, SMTP AUTH checklist, Graph user picker, tenant AI helper
-- **Tracking links** — branded short URLs (`/l/code`) and a campaign-URL checker (HTTPS, lookalikes, public shorteners). Same destination for every click, including scanners.
+- **Tracking links** — branded short URLs (`/l/code`) and a campaign-URL checker
+- **Deliverability** — debounce pasted addresses and sort by MX provider / ISP (Gmail, Microsoft 365, Yahoo, OVH, ISPs, …)
 - **Placeholders** — `{{name}}` `{{first_name}}` `{{email}}` `{{phone}}` `{{company}}` `{{title}}` `{{custom1}}` plus `{{first_name|there}}` fallbacks.
 - **HTML letters** — signature request, document review, invoice, shared file, video meeting, calendar invite, receipt. Branded with **your** company name and **your** URLs.
 - **AI help** — rewrite / translate / suggest subject. Uses `OPENAI_API_KEY` when set; otherwise local letter generation still works.
@@ -90,6 +91,7 @@ src/
   leads.js          paste parser + SMTP-to-SMS addressing
   office365.js      Microsoft 365 Graph + SMTP AUTH
   links.js          short URLs + campaign link checks
+  deliverability.js MX lookup, provider sort, list debounce
   presets.js        SMTP / OVH / webmail / Japan / SMS / Office 365
   ai.js             optional Chat Completions helper
   mailer.js         Nodemailer transports

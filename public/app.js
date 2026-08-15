@@ -43,6 +43,7 @@ const NAV = [
   ['dashboard', '📊 Dashboard'],
   ['office365', '🏢 Office 365'],
   ['links', '🔗 Links'],
+  ['deliverability', '📬 Deliverability'],
   ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
@@ -221,6 +222,99 @@ views.links = async () => {
   });
 
   loadLinks().catch((e) => toast(e.message, 'err'));
+};
+
+views.deliverability = async () => {
+  view(`<div class="page-head"><h1>Deliverability</h1></div>
+    <p class="sub">Debounce pasted addresses (syntax, disposable, role, typos) and sort them by <b>MX → provider / ISP</b>. Lookups are cached 24h. Paste only — no file import.</p>
+    <div class="notice">This checks DNS MX, not live mailbox RCPT. A domain with MX can still bounce a missing user. Dropping no-MX / disposable / junk syntax protects your sender reputation.</div>
+    <textarea id="deb-text" rows="8" placeholder="alex@gmail.com
+jordan@contoso.com
+info@northwind.example
+not-an-email"></textarea>
+    <p class="muted small" id="deb-hint">Checking waits 0.8s after you stop typing, or hit Run now.</p>
+    <div class="actions" style="margin:10px 0">
+      <button type="button" id="deb-run">Run now</button>
+      <button type="button" class="secondary" id="deb-copy-keep">Copy keepers</button>
+      <button type="button" class="secondary" id="deb-copy-drop">Copy drops</button>
+    </div>
+    <div id="deb-sum" class="cards"></div>
+    <h2>By provider / ISP</h2>
+    <div id="deb-groups"></div>
+    <h2>Addresses</h2>
+    <table id="deb-table"></table>`);
+
+  let last = null;
+  let timer = null;
+
+  function copyText(s) {
+    navigator.clipboard.writeText(s).then(() => toast('Copied')).catch(() => prompt('Copy:', s));
+  }
+
+  function paint(data) {
+    last = data;
+    const s = data.summary;
+    const card = (n, label) => `<div class="card"><div class="stat">${n}</div><div class="stat-label">${label}</div></div>`;
+    $('deb-sum').innerHTML = [
+      card(s.total, 'Checked'),
+      card(s.keep, 'Keep'),
+      card(s.risky, 'Risky (role / typo)'),
+      card(s.drop, 'Drop'),
+      card(s.providers, 'Providers'),
+    ].join('');
+
+    $('deb-groups').innerHTML = data.groups.map((g) => `
+      <div class="card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+          <div><b>${esc(g.label)}</b> ${badge(g.kind === 'none' ? 'failed' : g.kind === 'isp' ? 'warn' : 'ok')}
+            <div class="muted small">${g.kind} · ${g.emails.length} · keep ${g.keep} · drop ${g.drop}</div></div>
+          <button type="button" class="tiny secondary" data-copy="${esc(g.id)}">Copy</button>
+        </div>
+      </div>`).join('') || '<div class="muted">No groups.</div>';
+
+    $('deb-groups').querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => {
+      const g = data.groups.find((x) => x.id === b.dataset.copy);
+      if (g) copyText(g.emails.join('\n'));
+    }));
+
+    $('deb-table').innerHTML = `<tr><th>Email</th><th>Verdict</th><th>Provider</th><th>MX</th><th>Note</th></tr>` +
+      data.results.map((r) => `<tr>
+        <td>${esc(r.email)}${r.suggestion ? `<div class="muted small">Did you mean ${esc(r.suggestion)}?</div>` : ''}</td>
+        <td>${badge(r.verdict === 'ok' ? 'confirmed' : r.verdict === 'risky' ? 'pending' : 'failed')} ${esc(r.verdict)}</td>
+        <td>${esc(r.label || r.provider)}</td>
+        <td class="mono small">${esc((r.mx || []).slice(0, 2).join(', ') || r.mx_error || '—')}</td>
+        <td class="muted small">${esc(r.reason || (r.flags || []).join(', '))}</td>
+      </tr>`).join('');
+  }
+
+  async function run() {
+    const text = $('deb-text').value;
+    if (!text.trim()) return;
+    $('deb-hint').textContent = 'Looking up MX…';
+    try {
+      const data = await api('/api/deliverability/check', { method: 'POST', body: { text } });
+      $('deb-hint').textContent = `Done · ${data.summary.keep} keep / ${data.summary.drop} drop. Cached MX reused for 24h.`;
+      paint(data);
+    } catch (err) {
+      $('deb-hint').textContent = '';
+      toast(err.message, 'err');
+    }
+  }
+
+  $('deb-text').addEventListener('input', () => {
+    $('deb-hint').textContent = 'Waiting for you to finish pasting…';
+    clearTimeout(timer);
+    timer = setTimeout(run, 800);
+  });
+  $('deb-run').addEventListener('click', () => { clearTimeout(timer); run(); });
+  $('deb-copy-keep').addEventListener('click', () => {
+    if (!last) return toast('Run a check first', 'err');
+    copyText(last.results.filter((r) => r.keep).map((r) => r.email).join('\n'));
+  });
+  $('deb-copy-drop').addEventListener('click', () => {
+    if (!last) return toast('Run a check first', 'err');
+    copyText(last.results.filter((r) => !r.keep).map((r) => r.email).join('\n'));
+  });
 };
 
 views.compose = async () => {

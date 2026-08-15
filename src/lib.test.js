@@ -12,6 +12,7 @@ import {
   GRAPH_PERMISSIONS,
 } from './office365.js';
 import { staticValidate, classifyClient, extractUrls } from './links.js';
+import { inspectLocal, classifyMx, debounceEmails } from './deliverability.js';
 
 describe('parseLeads', () => {
   it('reads one email per line', () => {
@@ -168,5 +169,40 @@ describe('presets', () => {
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.mail.ovh.net'));
     assert.ok(SMTP_PRESETS.some((p) => p.host.includes('yahoo.co.jp')));
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.office365.com'));
+  });
+});
+
+describe('deliverability', () => {
+  it('flags syntax, disposable, role, typos', () => {
+    assert.equal(inspectLocal('not-an-email').verdict, 'invalid');
+    assert.equal(inspectLocal('a@mailinator.com').verdict, 'drop');
+    assert.equal(inspectLocal('info@northwind.example').verdict, 'risky');
+    assert.equal(inspectLocal('alex@gmial.com').suggestion, 'alex@gmail.com');
+    assert.equal(inspectLocal('alex@gmail.com').verdict, 'ok');
+  });
+
+  it('sorts MX hosts to providers and ISPs', () => {
+    assert.equal(classifyMx('gmail.com', ['gmail-smtp-in.l.google.com']).provider, 'gmail');
+    assert.equal(classifyMx('acme.com', ['aspmx.l.google.com']).provider, 'google_workspace');
+    assert.equal(classifyMx('acme.com', ['acme-com.mail.protection.outlook.com']).provider, 'microsoft365');
+    assert.equal(classifyMx('comcast.net', ['mx1.comcast.net']).kind, 'isp');
+    assert.equal(classifyMx('ghost.invalid', []).provider, 'no_mx');
+  });
+
+  it('debounces a paste and groups by provider', async () => {
+    const lookup = async (domain) => {
+      if (domain === 'gmail.com') return { mx: ['gmail-smtp-in.l.google.com'], error: '' };
+      if (domain === 'contoso.com') return { mx: ['contoso-com.mail.protection.outlook.com'], error: '' };
+      if (domain === 'no-mx.test') return { mx: [], error: 'no_mx' };
+      return { mx: ['mx.example.com'], error: '' };
+    };
+    const out = await debounceEmails(
+      'a@gmail.com\nb@contoso.com\nbad\nc@no-mx.test\na@gmail.com',
+      { lookup }
+    );
+    assert.equal(out.summary.total, 3);
+    assert.ok(out.groups.some((g) => g.id === 'gmail'));
+    assert.ok(out.groups.some((g) => g.id === 'microsoft365'));
+    assert.ok(out.results.find((r) => r.email === 'c@no-mx.test').verdict === 'drop');
   });
 });

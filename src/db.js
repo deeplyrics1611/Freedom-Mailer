@@ -206,6 +206,13 @@ CREATE TABLE IF NOT EXISTS link_clicks (
 
 CREATE INDEX IF NOT EXISTS idx_short_code ON short_links(code);
 CREATE INDEX IF NOT EXISTS idx_clicks_link ON link_clicks(link_id, created_at);
+
+CREATE TABLE IF NOT EXISTS mx_cache (
+  domain     TEXT PRIMARY KEY,
+  mx_json    TEXT NOT NULL DEFAULT '[]',
+  error      TEXT NOT NULL DEFAULT '',
+  checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 export default db;

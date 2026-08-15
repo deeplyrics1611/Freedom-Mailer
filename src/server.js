@@ -22,6 +22,7 @@ import aiRoutes from './routes/ai.js';
 import leadRoutes from './routes/leads.js';
 import office365Routes from './routes/office365.js';
 import linkRoutes from './routes/links.js';
+import deliverabilityRoutes from './routes/deliverability.js';
 import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +99,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/office365', office365Routes);
 app.use('/api/links', linkRoutes);
+app.use('/api/deliverability', deliverabilityRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);
