@@ -631,6 +631,19 @@ pre {
 .quota-edit input { width: 100px; }
 .notes-label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
 .notes-label textarea, .notes-label input { margin-top: 4px; width: 100%; }
+.dns-steps { margin: 8px 0 12px 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.dns-steps li { margin: 6px 0; }
+.dns-record {
+  font-size: 13px;
+  border: 1px solid var(--line, #333);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 4px;
+}
+.dns-record code { font-size: 13px; }
+.notice.error-box { border-color: var(--err); }
 
 @media (max-width: 1100px) {
   .compose { grid-template-columns: 1fr; }

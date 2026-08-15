@@ -11,7 +11,7 @@ import {
   OFFICE_SMTP,
   GRAPH_PERMISSIONS,
 } from './office365.js';
-import { staticValidate, classifyClient, extractUrls, parseLinkBase, shortUrl, linkBaseFor } from './links.js';
+import { staticValidate, classifyClient, extractUrls, parseLinkBase, shortUrl, linkBaseFor, cnameRecord, probeLinkHost } from './links.js';
 import { inspectLocal, classifyMx, debounceEmails } from './deliverability.js';
 import {
   buildMailgunForm,
@@ -188,8 +188,25 @@ describe('links', () => {
     const weak = parseLinkBase('go.client.su');
     assert.equal(weak.ok, true);
     assert.ok(weak.warnings.some((w) => w.includes('.su')));
+    const apex = parseLinkBase('https://northwind.com');
+    assert.equal(apex.ok, true);
+    assert.ok(apex.warnings.some((w) => w.includes('subdomain')));
     assert.equal(shortUrl('abc23456', { link_base_url: 'https://go.northwind.com' }), 'https://go.northwind.com/l/abc23456');
     assert.equal(linkBaseFor({}), linkBaseFor(null));
+    const rec = cnameRecord('https://go.northwind.com', 'mail.freedom.test');
+    assert.equal(rec.type, 'CNAME');
+    assert.equal(rec.name, 'go');
+    assert.equal(rec.fqdn, 'go.northwind.com');
+    assert.equal(rec.value, 'mail.freedom.test');
+    assert.equal(cnameRecord('northwind.com', 'mail.freedom.test').fqdn, 'go.northwind.com');
+  });
+
+  it('rejects a lookalike tracking host without doing DNS', async () => {
+    const bad = await probeLinkHost('https://login-microsoft.xyz', { fetchHttps: false });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /impersonation|microsoft/i);
+    const blank = await probeLinkHost('', { fetchHttps: false });
+    assert.equal(blank.skipped, true);
   });
 });
 

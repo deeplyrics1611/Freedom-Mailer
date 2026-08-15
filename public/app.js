@@ -7,6 +7,56 @@ function trackingBase(user = state.user) {
   const raw = String(user?.link_base_url || '').trim().replace(/\/$/, '');
   return raw || location.origin;
 }
+function mailerHost() {
+  const h = String(state.user?.mailer_host || '').trim();
+  return h || location.hostname;
+}
+function previewCname(raw) {
+  let host = String(raw || '').trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+  const labels = host.split('.').filter(Boolean);
+  const target = mailerHost();
+  if (labels.length < 3) {
+    return { name: 'go', fqdn: host ? `go.${host}` : 'go.yourbrand.com', value: target, apex: true };
+  }
+  return { name: labels.slice(0, -2).join('.'), fqdn: host, value: target, apex: false };
+}
+function dnsRecordHtml(raw) {
+  const rec = previewCname(raw);
+  const local = state.user?.mailer_local || rec.value === 'localhost';
+  return `<div class="dns-record">
+      <div><span class="muted">Type</span> CNAME</div>
+      <div><span class="muted">Name / Host</span> <code>${esc(rec.name)}</code></div>
+      <div><span class="muted">Value / Target</span> <code>${esc(rec.value || 'your-public-mailer-host')}</code></div>
+      <div><span class="muted">TTL</span> 300</div>
+      <div class="muted small">FQDN ${esc(rec.fqdn)}</div>
+    </div>
+    ${local ? '<p class="error">This panel is on localhost. Deploy Freedom Mailer on a public host, set <code>APP_BASE_URL</code> to that https URL, then use that hostname as the CNAME target — not localhost.</p>' : ''}
+    ${rec.apex ? '<p class="muted small">Prefer a subdomain (<code>go.brand.com</code>), not the naked domain.</p>' : ''}`;
+}
+async function checkLinkHost(raw, outEl) {
+  if (!outEl) return;
+  outEl.textContent = 'Checking DNS…';
+  outEl.className = 'notice';
+  try {
+    const r = await api('/api/auth/link-domain/check', { method: 'POST', body: { link_base_url: raw } });
+    const lines = [];
+    if (r.skipped) lines.push(r.detail);
+    else {
+      lines.push(r.dns_ok ? `DNS is live${r.addresses?.length ? ' (' + r.addresses.join(', ') + ')' : ''}.` : (r.error || 'DNS not found yet.'));
+      if (r.cname?.length) lines.push(`CNAME → ${r.cname.join(', ')}`);
+      if (r.https_ok) lines.push('HTTPS /health reached this mailer.');
+      else if (r.dns_ok) lines.push(r.hint || 'HTTPS is not serving this mailer yet.');
+      (r.warnings || []).forEach((w) => lines.push(w));
+    }
+    outEl.innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join('');
+    outEl.className = r.ok ? 'notice' : 'notice error-box';
+    toast(r.ok ? 'Subdomain is ready' : (r.error || r.hint || 'Not ready yet'), r.ok ? 'ok' : 'err');
+  } catch (err) {
+    outEl.textContent = err.message;
+    outEl.className = 'notice error-box';
+    toast(err.message, 'err');
+  }
+}
 
 const THEMES = [
   { id: 'phoenix', label: 'Phoenix', tag: 'PHOENIX // GLOBAL RELAY', a: '#c41e2a', b: '#050307' },
@@ -206,7 +256,11 @@ views.links = async () => {
     <div class="notice">
       Click, confirm, and unsubscribe links currently use <code>${esc(host)}</code>
       ${custom ? '' : ' (panel host — set a client domain under Account).'}
-      <div class="muted small" style="margin-top:8px">Point a subdomain of the domain you send from (example <code>go.yourbrand.com</code>) with a CNAME to <code>${esc(location.hostname)}</code>, terminate HTTPS there, then save it on Account. Random .su / .ru / .xyz names and brand lookalikes hurt delivery — they are not a cold-mail shortcut.</div>
+      <div class="muted small" style="margin-top:8px">
+        Implement it as a subdomain of the sending domain: CNAME <code>go</code> → <code>${esc(mailerHost())}</code>,
+        add HTTPS, then save it under Account. Setup steps and a DNS check live on the Account page.
+        Random .su / .ru / .xyz names and brand lookalikes hurt delivery.
+      </div>
     </div>
     <div class="notice">Serving a clean page to scanners and a different offer to humans is how spam filters catch you. This shortener does not do that.</div>
 
@@ -1607,14 +1661,27 @@ views.account = async () => {
         <div class="muted small">${esc(t.tag)}</div>
       </button>`).join('')}
     </div>
-    <h2>Tracking host</h2>
-    <p class="muted small">Use a subdomain of the domain you send from, not a random or lookalike name. CNAME it to <code>${esc(location.hostname)}</code> and put HTTPS on it. Leave blank to use this panel host (${esc(location.origin)}).</p>
-    <form id="link-host-form" class="form-grid" style="max-width:520px">
+    <h2>Tracking subdomain</h2>
+    <p class="muted small">Links in mail should live on a subdomain of the domain you send from — for example send as <code>hello@yourbrand.com</code> and put clicks on <code>go.yourbrand.com</code>.</p>
+    <ol class="dns-steps">
+      <li>Put Freedom Mailer on a <b>public</b> host (VPS, Docker, Render). Set <code>APP_BASE_URL=https://${esc(mailerHost())}</code>. A laptop <code>localhost</code> cannot receive a public CNAME.</li>
+      <li>At the client’s DNS (Cloudflare, Namecheap, GoDaddy, the registrar for <code>yourbrand.com</code>), add this record:</li>
+    </ol>
+    <div id="dns-preview">${dnsRecordHtml(state.user.link_base_url || 'go.yourbrand.com')}</div>
+    <ol class="dns-steps" start="3">
+      <li>Turn on HTTPS for that hostname. On Render: add a custom domain. On a VPS: Caddy or nginx + Let’s Encrypt. On Cloudflare: proxy the CNAME (orange cloud) with SSL, or DNS-only (grey cloud) and issue the cert on the mailer.</li>
+      <li>Save the host below, then Check DNS. You should get JSON at <code>https://go.yourbrand.com/health</code>.</li>
+    </ol>
+    <form id="link-host-form" class="form-grid" style="max-width:560px">
       <div class="field full"><label>Host for click / confirm / unsubscribe links</label>
         <input id="link-base-input" name="link_base_url" placeholder="https://go.yourbrand.com" value="${esc(state.user.link_base_url || '')}">
       </div>
-      <div class="actions full"><button type="submit">Save tracking host</button></div>
+      <div class="actions full">
+        <button type="submit">Save tracking host</button>
+        <button type="button" class="secondary" id="link-host-check">Check DNS</button>
+      </div>
     </form>
+    <div id="link-host-out" class="notice hidden"></div>
     <h2>Change password</h2>
     <form id="pw-form" class="form-grid" style="max-width:520px">
       <div class="field full"><label>Current password</label><input name="current" type="password" required></div>
@@ -1624,12 +1691,21 @@ views.account = async () => {
   $('theme-grid').querySelectorAll('[data-theme-id]').forEach((b) => {
     b.addEventListener('click', () => applyTheme(b.dataset.themeId));
   });
+  $('link-base-input').addEventListener('input', () => {
+    $('dns-preview').innerHTML = dnsRecordHtml($('link-base-input').value || 'go.yourbrand.com');
+  });
+  $('link-host-check').addEventListener('click', () => {
+    const box = $('link-host-out');
+    box.classList.remove('hidden');
+    checkLinkHost($('link-base-input').value, box);
+  });
   $('link-host-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
       const r = await api('/api/auth/link-domain', { method: 'PATCH', body: { link_base_url: $('link-base-input').value } });
       const { warnings, ...user } = r;
       state.user = { ...state.user, ...user };
+      $('dns-preview').innerHTML = dnsRecordHtml($('link-base-input').value || 'go.yourbrand.com');
       toast(warnings?.length ? warnings.join(' ') : 'Tracking host saved', warnings?.length ? 'err' : 'ok');
     } catch (err) { toast(err.message, 'err'); }
   });
@@ -1783,6 +1859,16 @@ views.admin = async () => {
         } catch (err) { toast(err.message, 'err'); }
       });
     });
+    $('admin-clients').querySelectorAll('[data-linkcheck]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.linkcheck;
+        const inp = $('admin-clients').querySelector(`[data-linkbase="${id}"]`);
+        const out = $('admin-clients').querySelector(`[data-linkcheck-out="${id}"]`);
+        if (!inp || !out) return;
+        out.classList.remove('hidden');
+        checkLinkHost(inp.value, out);
+      });
+    });
     $('admin-clients').querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
       const text = `Freedom Mailer\nSign in: ${location.origin}\nEmail: ${b.dataset.copy}\nAsk the operator for the password.`;
       try { await navigator.clipboard.writeText(text); toast('Invite copied'); }
@@ -1850,6 +1936,8 @@ views.admin = async () => {
         <label class="notes-label">Tracking host (client-owned subdomain)
           <input data-linkbase="${u.id}" value="${esc(u.link_base_url || '')}" placeholder="https://go.clientbrand.com">
         </label>
+        <button type="button" class="tiny secondary" data-linkcheck="${u.id}">Check DNS</button>
+        <div class="muted small hidden" data-linkcheck-out="${u.id}"></div>
         <label class="notes-label">Operator notes
           <textarea rows="2" data-notes="${u.id}" placeholder="Internal notes (client never sees this)">${esc(u.notes || '')}</textarea>
         </label>

@@ -1,5 +1,7 @@
 import { customAlphabet } from 'nanoid';
+import dns from 'node:dns/promises';
 import { config } from './config.js';
+import { isRoutableIp } from './deliverability.js';
 
 const genCode = customAlphabet('abcdefghijkmnopqrstuvwxyz23456789', 8);
 
@@ -53,8 +55,152 @@ export function parseLinkBase(raw) {
   if (RISKY_LINK_TLDS.has(tld)) {
     warnings.push(`.${tld} is a weak TLD for email clicks. Prefer a subdomain of the client’s sending domain.`);
   }
+  if (host.split('.').filter(Boolean).length < 3) {
+    warnings.push('Use a subdomain such as go.yourbrand.com, not the naked domain.');
+  }
   const url = `https://${host}`;
   return { ok: true, url, host, warnings };
+}
+
+export function mailerHostname() {
+  try {
+    return new URL(config.appBaseUrl).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+export function isLocalMailerHost(host = mailerHostname()) {
+  const h = String(host || '').toLowerCase();
+  return !h || h === 'localhost' || isPrivateHost(h) || isIpHost(h);
+}
+
+/** DNS record to create at the client’s registrar (zone = the sending domain). */
+export function cnameRecord(trackingHost, target = mailerHostname()) {
+  let host = String(trackingHost || '').trim().toLowerCase();
+  host = host.replace(/^https?:\/\//, '').split('/')[0];
+  const labels = host.split('.').filter(Boolean);
+  if (labels.length < 3) {
+    return {
+      type: 'CNAME',
+      name: 'go',
+      fqdn: host ? `go.${host}` : 'go.yourbrand.com',
+      value: target || 'your-mailer.example.com',
+      ttl: 300,
+      apex: true,
+    };
+  }
+  return {
+    type: 'CNAME',
+    name: labels.slice(0, -2).join('.'),
+    fqdn: host,
+    value: target || 'your-mailer.example.com',
+    ttl: 300,
+    apex: false,
+  };
+}
+
+/** Look up the tracking host and optionally hit /health. Never follows private IPs. */
+export async function probeLinkHost(raw, { fetchHttps = true } = {}) {
+  const parsed = parseLinkBase(raw);
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error, dns_ok: false, https_ok: false };
+  }
+  const target = mailerHostname();
+  const record = cnameRecord(parsed.host || raw, target);
+  if (!parsed.host) {
+    return {
+      ok: true,
+      skipped: true,
+      host: '',
+      dns_ok: true,
+      https_ok: true,
+      detail: 'Blank host uses the panel URL. No extra DNS record is required.',
+      record,
+      warnings: [],
+    };
+  }
+
+  const result = {
+    ok: true,
+    host: parsed.host,
+    url: parsed.url,
+    warnings: [...(parsed.warnings || [])],
+    record,
+    mailer_host: target,
+    mailer_local: isLocalMailerHost(target),
+    cname: [],
+    addresses: [],
+    dns_ok: false,
+    https_ok: false,
+    https_status: null,
+    error: '',
+    hint: `Add CNAME ${record.name} → ${record.value} on the ${parsed.host.split('.').slice(-2).join('.')} zone.`,
+  };
+
+  if (result.mailer_local) {
+    result.warnings.push(
+      'This panel is still on a local host. After you deploy, CNAME the subdomain to that public hostname — not to localhost.'
+    );
+  }
+
+  try {
+    try {
+      result.cname = await dns.resolveCname(parsed.host);
+    } catch {
+      result.cname = [];
+    }
+    const looked = await dns.lookup(parsed.host, { all: true });
+    result.addresses = [...new Set((looked || []).map((row) => row.address).filter(Boolean))];
+  } catch {
+    result.ok = false;
+    result.error = `No DNS for ${parsed.host} yet.`;
+    return result;
+  }
+
+  if (!result.addresses.length) {
+    result.ok = false;
+    result.error = `No DNS for ${parsed.host} yet.`;
+    return result;
+  }
+
+  const privateHit = result.addresses.find((ip) => !isRoutableIp(ip));
+  if (privateHit) {
+    result.ok = false;
+    result.error = `Hostname resolves to a private IP (${privateHit}). Point it at the public mailer, not a LAN address.`;
+    return result;
+  }
+  result.dns_ok = true;
+
+  if (!fetchHttps) return result;
+
+  try {
+    const res = await fetch(`${parsed.url}/health`, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(6000),
+      headers: { Accept: 'application/json' },
+    });
+    result.https_status = res.status;
+    let bodyOk = res.status >= 200 && res.status < 400;
+    const ct = res.headers.get('content-type') || '';
+    if (res.status === 200 && ct.includes('json')) {
+      const body = await res.json().catch(() => null);
+      bodyOk = !!(body && body.ok === true);
+    }
+    result.https_ok = bodyOk;
+    if (!result.https_ok) {
+      result.ok = false;
+      result.hint =
+        'DNS is live, but HTTPS is not serving this mailer. Add the hostname as a custom domain (Render / nginx / Caddy / Cloudflare) so a certificate is issued.';
+    }
+  } catch {
+    result.ok = false;
+    result.https_ok = false;
+    result.hint =
+      'DNS is live, HTTPS is not. Issue a certificate for this hostname that terminates on the mailer (or on Cloudflare in front of it).';
+  }
+  return result;
 }
 
 const PRIVATE = [
