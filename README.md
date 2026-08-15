@@ -18,6 +18,11 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
   - **Japan mail** — Yahoo! Mail Japan, Sakura, Xserver, Lolipop, GMO, Biglobe, OCN
   - **SMTP → SMS** — short text emailed to `number@carrier-gateway`
   - **Office 365 tenant** — Entra app + Graph `sendMail`, or SMTP AUTH on `smtp.office365.com`
+  - **Mailgun** — SMTP (`smtp.mailgun.org`) or HTTP `/v3/{domain}/messages` with your API key
+  - **SendGrid** — SMTP (`smtp.sendgrid.net`, user `apikey`) or HTTP `v3/mail/send`
+  - **Postfix** — your relay; username/password optional when the host allowlists this IP
+  - **AWS SES** — SMTP credentials or IAM SigV4 HTTP API in your region
+- **Themes** — Phoenix, Midnight, Carbon, Ember, Snow (Account page or the sidebar dots)
 - **Office 365 admin** — tenant ID, app registration, mailboxes, SMTP AUTH checklist, Graph user picker, tenant AI helper
 - **Tracking links** — branded short URLs (`/l/code`) and a campaign-URL checker
 - **Deliverability** — debounce pasted addresses and sort by MX provider / ISP (Gmail, Microsoft 365, Yahoo, OVH, ISPs, …)
@@ -64,10 +69,21 @@ Data lives in `data/freedom-mailer.sqlite`.
 
 ## Sending flow
 
-1. Add a **sender** (pick a preset, enter your mailbox credentials) and **Verify**.
+1. Add a **sender** (pick a preset, enter your mailbox or ESP credentials) and **Verify**.
 2. Open **Compose**, paste recipients, generate or write a letter.
 3. Confirm the people opted in, then **Queue send**.
 4. The worker delivers at `GLOBAL_RATE_PER_MINUTE`, injects an unsubscribe footer, and logs each attempt.
+
+### Mailgun, SendGrid, Postfix, AWS SES
+
+| Sender | SMTP | HTTP API |
+|---|---|---|
+| **Mailgun** | `smtp.mailgun.org:587` (EU: `smtp.eu.mailgun.org`). Username is usually `postmaster@YOUR_DOMAIN`. | Username = sending domain. Password = Private API key. From must be on that domain. |
+| **SendGrid** | `smtp.sendgrid.net:587`. Username is the literal word `apikey`. Password = API key. | Same API key. From must be a verified SendGrid sender. |
+| **Postfix** | Your host, port 25 or 587. Leave user/password blank if `mynetworks` allowlists this machine. | — |
+| **AWS SES** | `email-smtp.{region}.amazonaws.com:587` with SMTP credentials from the SES console. | IAM access key + secret (`ses:SendEmail`). From must be a verified identity in that region. |
+
+Verify talks to the provider (SMTP `EHLO`/AUTH, Mailgun domain GET, SendGrid scopes, SES `GetAccount`) using the credentials you saved.
 
 ### Office 365 tenant
 
@@ -92,9 +108,10 @@ src/
   office365.js      Microsoft 365 Graph + SMTP AUTH
   links.js          short URLs + campaign link checks
   deliverability.js MX lookup, provider sort, list debounce
-  presets.js        SMTP / OVH / webmail / Japan / SMS / Office 365
+  presets.js        SMTP / OVH / webmail / Japan / SMS / Office 365 / Mailgun / SendGrid / Postfix / SES
+  providers.js      Mailgun + SendGrid HTTP APIs and AWS SES SigV4
   ai.js             optional Chat Completions helper
-  mailer.js         Nodemailer transports
+  mailer.js         Nodemailer transports + HTTP send
   queue.js          rate-limited delivery
   routes/           panel + API
 public/             vanilla SPA

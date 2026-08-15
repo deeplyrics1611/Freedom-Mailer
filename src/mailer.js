@@ -2,16 +2,30 @@ import nodemailer from 'nodemailer';
 import { config } from './config.js';
 import { db } from './db.js';
 import { getAppToken, graphFetch, sendViaGraph } from './office365.js';
+import {
+  usesHttpApi,
+  sendViaMailgun,
+  verifyMailgun,
+  sendViaSendGrid,
+  verifySendGrid,
+  sendViaSes,
+  verifySes,
+} from './providers.js';
 
 export function transportForSender(sender) {
   if (sender) {
-    return nodemailer.createTransport({
+    const opts = {
       host: sender.host,
       port: sender.port,
       secure: !!sender.secure,
-      auth: { user: sender.username, pass: sender.password },
-      requireTLS: sender.host === 'smtp.office365.com',
-    });
+      requireTLS:
+        sender.host === 'smtp.office365.com' ||
+        (sender.kind === 'aws' && String(sender.host || '').includes('email-smtp.')),
+    };
+    if (sender.username && sender.password) {
+      opts.auth = { user: sender.username, pass: sender.password };
+    }
+    return nodemailer.createTransport(opts);
   }
   const s = config.systemSmtp;
   if (!s.host || !s.user) {
@@ -50,6 +64,11 @@ export async function verifyTransport(sender) {
       return true;
     }
   }
+  if (usesHttpApi(sender)) {
+    if (sender.kind === 'mailgun') return verifyMailgun(sender);
+    if (sender.kind === 'sendgrid') return verifySendGrid(sender);
+    if (sender.kind === 'aws') return verifySes(sender);
+  }
   const transport = transportForSender(sender);
   await transport.verify();
   return true;
@@ -68,6 +87,26 @@ export async function sendEmail({ sender, to, subject, html, text, headers }) {
         text,
         headers,
       });
+    }
+  }
+  if (usesHttpApi(sender)) {
+    const from = fromAddress(sender);
+    if (sender.kind === 'mailgun') {
+      return sendViaMailgun(sender, { from, to, subject, html, text, headers });
+    }
+    if (sender.kind === 'sendgrid') {
+      return sendViaSendGrid(sender, {
+        fromName: sender.from_name,
+        fromEmail: sender.from_email,
+        to,
+        subject,
+        html,
+        text,
+        headers,
+      });
+    }
+    if (sender.kind === 'aws') {
+      return sendViaSes(sender, { from, to, subject, html, text, headers });
     }
   }
   const transport = transportForSender(sender);

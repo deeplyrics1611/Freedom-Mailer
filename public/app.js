@@ -4,6 +4,45 @@ let o365Selected = null;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+const THEMES = [
+  { id: 'phoenix', label: 'Phoenix', tag: 'PHOENIX // GLOBAL RELAY', a: '#c41e2a', b: '#050307' },
+  { id: 'midnight', label: 'Midnight', tag: 'MIDNIGHT // DEEP RELAY', a: '#2f7fff', b: '#05080f' },
+  { id: 'carbon', label: 'Carbon', tag: 'CARBON // TERMINAL', a: '#1f9d55', b: '#070908' },
+  { id: 'ember', label: 'Ember', tag: 'EMBER // FORGE', a: '#e85d04', b: '#100704' },
+  { id: 'snow', label: 'Snow', tag: 'SNOW // DAYLIGHT', a: '#c41e2a', b: '#f3eee9' },
+];
+
+function currentTheme() {
+  const id = localStorage.getItem('fm_theme') || 'phoenix';
+  return THEMES.find((t) => t.id === id) || THEMES[0];
+}
+
+function applyTheme(id, persist = true) {
+  const t = THEMES.find((x) => x.id === id) || THEMES[0];
+  document.documentElement.setAttribute('data-theme', t.id);
+  if (persist) localStorage.setItem('fm_theme', t.id);
+  const loginTag = $('login-tag');
+  const sideTag = $('sidebar-tag');
+  if (loginTag) loginTag.textContent = t.tag;
+  if (sideTag) sideTag.textContent = t.tag;
+  renderThemeSwitch();
+  document.querySelectorAll('.theme-card').forEach((c) => c.classList.toggle('active', c.dataset.themeId === t.id));
+}
+
+function renderThemeSwitch() {
+  const el = $('theme-switch');
+  if (!el) return;
+  const cur = currentTheme().id;
+  el.innerHTML = THEMES.map((t) =>
+    `<button type="button" class="theme-dot${t.id === cur ? ' active' : ''}" data-theme-id="${t.id}" title="${esc(t.label)}" style="--dot-a:${t.a};--dot-b:${t.b}" aria-label="${esc(t.label)}"></button>`
+  ).join('');
+  el.querySelectorAll('[data-theme-id]').forEach((b) => {
+    b.addEventListener('click', () => applyTheme(b.dataset.themeId));
+  });
+}
+
+applyTheme(localStorage.getItem('fm_theme') || 'phoenix', false);
+
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -70,6 +109,7 @@ function go(route) { state.route = route; renderNav(); views[route](); }
 async function boot() {
   state.user = await api('/api/auth/me');
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  renderThemeSwitch();
   renderNav(); go('compose');
 }
 
@@ -81,6 +121,7 @@ const badge = (status) => {
     sending: 'warn', draft: 'muted', failed: 'err', skipped: 'muted', unsubscribed: 'muted',
     smtp: 'muted', ovh: 'ok', webmail: 'warn', japan: 'ok', smtp_sms: 'warn',
     office365: 'ok', graph: 'ok', smtp_auth: 'warn',
+    mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', api: 'ok',
   };
   return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
 };
@@ -795,25 +836,38 @@ views.office365 = async () => {
 
 views.senders = async () => {
   const presets = await api('/api/senders/presets');
+  const apiKinds = new Set(['mailgun', 'sendgrid', 'aws']);
+  const regionKinds = new Set(['mailgun', 'aws']);
   view(`<div class="page-head"><h1>Senders</h1></div>
-    <p class="sub">SMTP for mailboxes and domains you own. OVH, webmail, and Japan hosts are presets that fill the official server — not a proxy.</p>
-    <div class="notice">Microsoft 365 tenant (Graph app + SMTP AUTH) lives under <a data-go="office365">Office 365</a>. Use this page for other SMTP hosts, or a single Outlook mailbox.</div>
+    <p class="sub">Mailboxes and ESP accounts you own: SMTP, Mailgun, SendGrid, Postfix, AWS SES, OVH, webmail, Japan hosts. Credentials stay on this server.</p>
+    <div class="notice">Microsoft 365 tenant (Graph app + SMTP AUTH) lives under <a data-go="office365">Office 365</a>. Mailgun / SendGrid / AWS send through <b>your</b> verified domain or identity — not a shared relay.</div>
     <div class="kind-tabs" id="kind-tabs">
       ${presets.kinds.map((k) => `<button type="button" data-kind="${k.id}">${esc(k.label)}</button>`).join('')}
     </div>
     <p class="muted small" id="kind-blurb"></p>
     <form id="sender-form" class="form-grid">
       <div class="field"><label>Preset</label><select name="preset" id="preset-sel"></select></div>
+      <div class="field hidden" id="s-mode-wrap">
+        <label>Connection</label>
+        <select name="auth_mode" id="s-auth">
+          <option value="smtp">SMTP</option>
+          <option value="api">HTTP API</option>
+        </select>
+      </div>
+      <div class="field hidden" id="s-region-wrap">
+        <label>Region</label>
+        <select name="region" id="s-region"></select>
+      </div>
       <div class="field"><label>Label</label><input name="label" required placeholder="Billing mailbox"></div>
       <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="hello@yourdomain.com"></div>
       <div class="field"><label>From name</label><input name="from_name" placeholder="Your Company"></div>
-      <div class="field"><label>SMTP host</label><input name="host" id="s-host" required placeholder="smtp.yourprovider.com"></div>
-      <div class="field"><label>Port</label><input name="port" id="s-port" type="number" value="587"></div>
-      <div class="field"><label>Secure (TLS on connect)</label>
+      <div class="field" id="s-host-wrap"><label id="s-host-label">SMTP host</label><input name="host" id="s-host" required placeholder="smtp.yourprovider.com"></div>
+      <div class="field" id="s-port-wrap"><label>Port</label><input name="port" id="s-port" type="number" value="587"></div>
+      <div class="field" id="s-secure-wrap"><label>Secure (TLS on connect)</label>
         <select name="secure" id="s-secure"><option value="false">No (STARTTLS 587)</option><option value="true">Yes (465)</option></select>
       </div>
-      <div class="field"><label>Username</label><input name="username" required placeholder="usually the full email"></div>
-      <div class="field"><label>Password / app password</label><input name="password" type="password" required></div>
+      <div class="field"><label id="s-user-label">Username</label><input name="username" id="s-user" required placeholder="usually the full email"></div>
+      <div class="field"><label id="s-pass-label">Password / app password</label><input name="password" id="s-pass" type="password" required></div>
       <div class="field full hidden" id="sms-gw-wrap">
         <label>SMS gateway domain or pattern</label>
         <select id="sms-gw-sel">${presets.sms_gateways.map((g) => `<option value="${esc(g.domain)}">${esc(g.label)}${g.domain ? ' · ' + g.domain : ''}</option>`).join('')}</select>
@@ -827,6 +881,96 @@ views.senders = async () => {
     <table id="sender-table"></table>`);
 
   let kind = 'smtp';
+  let applyingPreset = false;
+
+  function fillRegions() {
+    const sel = $('s-region');
+    if (kind === 'mailgun') {
+      sel.innerHTML = (presets.mailgun_regions || []).map((r) => `<option value="${esc(r.id)}">${esc(r.label)}</option>`).join('');
+    } else if (kind === 'aws') {
+      sel.innerHTML = (presets.aws_regions || []).map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+    } else {
+      sel.innerHTML = '';
+    }
+  }
+
+  function applyRegionHost() {
+    if (applyingPreset) return;
+    const mode = $('s-auth').value;
+    const region = $('s-region').value;
+    if (kind === 'mailgun') {
+      const r = (presets.mailgun_regions || []).find((x) => x.id === region) || presets.mailgun_regions?.[0];
+      if (!r) return;
+      $('s-host').value = mode === 'api' ? r.apiHost : r.smtpHost;
+      if (mode === 'api') { $('s-port').value = 443; $('s-secure').value = 'true'; }
+      else if (!$('s-port').value) $('s-port').value = 587;
+    }
+    if (kind === 'aws' && region) {
+      $('s-host').value = mode === 'api' ? `email.${region}.amazonaws.com` : `email-smtp.${region}.amazonaws.com`;
+      if (mode === 'api') { $('s-port').value = 443; $('s-secure').value = 'true'; }
+      else { $('s-port').value = $('s-port').value || 587; $('s-secure').value = 'false'; }
+    }
+    if (kind === 'sendgrid') {
+      $('s-host').value = mode === 'api' ? 'api.sendgrid.com' : 'smtp.sendgrid.net';
+      if (mode === 'api') { $('s-port').value = 443; $('s-secure').value = 'true'; }
+      else { $('s-port').value = 587; $('s-secure').value = 'false'; }
+      if (!$('s-user').value) $('s-user').value = 'apikey';
+    }
+  }
+
+  function syncModeFields() {
+    const mode = $('s-auth').value;
+    const isApi = apiKinds.has(kind) && mode === 'api';
+    const isPostfix = kind === 'postfix';
+    $('s-host').required = !isApi && kind !== 'office365';
+    $('s-user').required = !isPostfix && !(kind === 'sendgrid' && isApi);
+    $('s-pass').required = !isPostfix;
+    $('s-host-wrap').classList.toggle('hidden', isApi);
+    $('s-port-wrap').classList.toggle('hidden', isApi);
+    $('s-secure-wrap').classList.toggle('hidden', isApi);
+    if (isPostfix) {
+      $('s-user-label').textContent = 'Username (optional)';
+      $('s-pass-label').textContent = 'Password (optional)';
+      $('s-user').placeholder = 'leave blank if IP-allowlisted';
+      $('s-host-label').textContent = 'Postfix host';
+      $('s-host').placeholder = 'mail.yourdomain.com';
+    } else if (kind === 'mailgun' && isApi) {
+      $('s-user-label').textContent = 'Sending domain';
+      $('s-pass-label').textContent = 'Mailgun API key';
+      $('s-user').placeholder = 'mg.yourdomain.com';
+    } else if (kind === 'mailgun') {
+      $('s-user-label').textContent = 'SMTP username';
+      $('s-pass-label').textContent = 'SMTP password';
+      $('s-user').placeholder = 'postmaster@yourdomain.com';
+      $('s-host-label').textContent = 'SMTP host';
+    } else if (kind === 'sendgrid' && isApi) {
+      $('s-user-label').textContent = 'Username (optional)';
+      $('s-pass-label').textContent = 'SendGrid API key';
+      $('s-user').placeholder = 'apikey';
+    } else if (kind === 'sendgrid') {
+      $('s-user-label').textContent = 'SMTP username';
+      $('s-pass-label').textContent = 'API key (password)';
+      $('s-user').placeholder = 'apikey';
+      $('s-host-label').textContent = 'SMTP host';
+    } else if (kind === 'aws' && isApi) {
+      $('s-user-label').textContent = 'Access key ID';
+      $('s-pass-label').textContent = 'Secret access key';
+      $('s-user').placeholder = 'AKIA…';
+    } else if (kind === 'aws') {
+      $('s-user-label').textContent = 'SES SMTP username';
+      $('s-pass-label').textContent = 'SES SMTP password';
+      $('s-user').placeholder = 'from SES console SMTP credentials';
+      $('s-host-label').textContent = 'SMTP host';
+    } else {
+      $('s-user-label').textContent = 'Username';
+      $('s-pass-label').textContent = 'Password / app password';
+      $('s-user').placeholder = 'usually the full email';
+      $('s-host-label').textContent = 'SMTP host';
+      $('s-host').placeholder = 'smtp.yourprovider.com';
+    }
+    applyRegionHost();
+  }
+
   function applyKind() {
     $('s-kind').value = kind;
     $('kind-tabs').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
@@ -835,18 +979,37 @@ views.senders = async () => {
     const opts = presets.presets.filter((p) => p.kind === kind);
     $('preset-sel').innerHTML = opts.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
     $('sms-gw-wrap').classList.toggle('hidden', kind !== 'smtp_sms');
+    $('s-mode-wrap').classList.toggle('hidden', !apiKinds.has(kind));
+    $('s-region-wrap').classList.toggle('hidden', !regionKinds.has(kind));
+    fillRegions();
     applyPreset();
   }
+
   function applyPreset() {
     const p = presets.presets.find((x) => x.id === $('preset-sel').value);
     if (!p) return;
+    applyingPreset = true;
+    if (p.auth_mode) $('s-auth').value = p.auth_mode;
+    else if (apiKinds.has(kind)) $('s-auth').value = 'smtp';
     if (p.host) $('s-host').value = p.host;
+    else if (kind === 'postfix') $('s-host').value = '';
     $('s-port').value = p.port;
     $('s-secure').value = p.secure ? 'true' : 'false';
+    if (p.username) $('s-user').value = p.username;
     $('preset-hint').textContent = p.hint || '';
+    applyingPreset = false;
+    syncModeFields();
   }
+
   $('kind-tabs').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.kind; applyKind(); }));
   $('preset-sel').addEventListener('change', applyPreset);
+  $('s-auth').addEventListener('change', () => {
+    const mode = $('s-auth').value;
+    const match = presets.presets.find((p) => p.kind === kind && p.auth_mode === mode);
+    if (match) $('preset-sel').value = match.id;
+    syncModeFields();
+  });
+  $('s-region').addEventListener('change', applyRegionHost);
   $('sms-gw-sel').addEventListener('change', () => { if ($('sms-gw-sel').value) $('sms-gw').value = $('sms-gw-sel').value; });
   applyKind();
 
@@ -855,16 +1018,16 @@ views.senders = async () => {
   $('sender-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = e.target; const b = Object.fromEntries(new FormData(f));
-    b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10);
+    b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10) || (b.auth_mode === 'api' ? 443 : 587);
     try { await api('/api/senders', { method: 'POST', body: b }); f.reset(); toast('Sender added'); views.senders(); }
     catch (err) { toast(err.message, 'err'); }
   });
   const rows = await api('/api/senders');
   $('sender-table').innerHTML = `<tr><th>Label</th><th>Type</th><th>From</th><th>Host</th><th>Status</th><th></th></tr>` +
     (rows.map((s) => `<tr>
-      <td>${esc(s.label)}</td><td>${badge(s.kind)}</td>
+      <td>${esc(s.label)}</td><td>${badge(s.kind)}${s.auth_mode ? ` ${badge(s.auth_mode)}` : ''}</td>
       <td>${esc(s.from_name)} &lt;${esc(s.from_email)}&gt;</td>
-      <td class="mono small">${esc(s.host)}:${s.port}${s.sms_gateway ? `<div class="muted">${esc(s.sms_gateway)}</div>` : ''}</td>
+      <td class="mono small">${esc(s.host)}${s.port ? ':' + s.port : ''}${s.region ? `<div class="muted">${esc(s.region)}</div>` : ''}${s.sms_gateway ? `<div class="muted">${esc(s.sms_gateway)}</div>` : ''}</td>
       <td>${s.verified ? badge('verified') : badge('pending')}</td>
       <td><button class="tiny secondary" data-v="${s.id}">Verify</button>
           <button class="tiny danger" data-d="${s.id}">Delete</button></td></tr>`).join('')
@@ -1130,14 +1293,27 @@ views.apikeys = async () => {
 };
 
 views.account = async () => {
+  const cur = currentTheme();
   view(`<div class="page-head"><h1>Account</h1></div>
     <p class="sub">${esc(state.user.email)} · role ${esc(state.user.role)}</p>
+    <h2>Theme</h2>
+    <p class="muted small">Saved in this browser. Phoenix is the default dark-red look.</p>
+    <div class="theme-grid" id="theme-grid">
+      ${THEMES.map((t) => `<button type="button" class="theme-card${t.id === cur.id ? ' active' : ''}" data-theme-id="${t.id}">
+        <div class="theme-swatch" style="background:linear-gradient(135deg, ${t.a}, ${t.b})"></div>
+        <b>${esc(t.label)}</b>
+        <div class="muted small">${esc(t.tag)}</div>
+      </button>`).join('')}
+    </div>
     <h2>Change password</h2>
     <form id="pw-form" class="form-grid" style="max-width:520px">
       <div class="field full"><label>Current password</label><input name="current" type="password" required></div>
       <div class="field full"><label>New password (min 8)</label><input name="next" type="password" required></div>
       <div class="actions full"><button type="submit">Update password</button></div>
     </form>`);
+  $('theme-grid').querySelectorAll('[data-theme-id]').forEach((b) => {
+    b.addEventListener('click', () => applyTheme(b.dataset.themeId));
+  });
   $('pw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {

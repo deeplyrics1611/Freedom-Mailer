@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseLeads, toSmsAddress, isEmail } from './leads.js';
 import { renderTemplate, expandVars, listPlaceholders } from './placeholders.js';
 import { generateLetter, letterCatalog } from './letters.js';
-import { SMTP_PRESETS, SENDER_KINDS } from './presets.js';
+import { SMTP_PRESETS, SENDER_KINDS, applyProviderDefaults, awsSesSmtpHost } from './presets.js';
 import {
   tokenUrl,
   buildGraphMessage,
@@ -13,6 +13,15 @@ import {
 } from './office365.js';
 import { staticValidate, classifyClient, extractUrls } from './links.js';
 import { inspectLocal, classifyMx, debounceEmails } from './deliverability.js';
+import {
+  buildMailgunForm,
+  buildSendGridPayload,
+  buildSesPayload,
+  signAwsV4,
+  mailgunDomain,
+  mailgunApiBase,
+  usesHttpApi,
+} from './providers.js';
 
 describe('parseLeads', () => {
   it('reads one email per line', () => {
@@ -163,12 +172,29 @@ describe('links', () => {
 });
 
 describe('presets', () => {
-  it('covers smtp, ovh, webmail, japan, smtp_sms, office365', () => {
+  it('covers smtp, ovh, webmail, japan, smtp_sms, office365, mailgun, sendgrid, postfix, aws', () => {
     const kinds = new Set(SENDER_KINDS.map((k) => k.id));
-    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms', 'office365']) assert.ok(kinds.has(id));
+    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms', 'office365', 'mailgun', 'sendgrid', 'postfix', 'aws']) {
+      assert.ok(kinds.has(id), id);
+    }
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.mail.ovh.net'));
     assert.ok(SMTP_PRESETS.some((p) => p.host.includes('yahoo.co.jp')));
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.office365.com'));
+    assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.mailgun.org'));
+    assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.sendgrid.net'));
+    assert.ok(SMTP_PRESETS.some((p) => p.kind === 'postfix'));
+    assert.ok(SMTP_PRESETS.some((p) => p.host.includes('email-smtp.')));
+  });
+
+  it('fills Mailgun / SendGrid / AWS hosts from region and mode', () => {
+    const mg = applyProviderDefaults({ kind: 'mailgun', auth_mode: 'api', region: 'eu' });
+    assert.equal(mg.host, 'api.eu.mailgun.net');
+    assert.equal(mg.port, 443);
+    const ses = applyProviderDefaults({ kind: 'aws', auth_mode: 'smtp', region: 'eu-west-1' });
+    assert.equal(ses.host, awsSesSmtpHost('eu-west-1'));
+    const sg = applyProviderDefaults({ kind: 'sendgrid', auth_mode: 'smtp' });
+    assert.equal(sg.username, 'apikey');
+    assert.equal(sg.host, 'smtp.sendgrid.net');
   });
 });
 
@@ -204,5 +230,75 @@ describe('deliverability', () => {
     assert.ok(out.groups.some((g) => g.id === 'gmail'));
     assert.ok(out.groups.some((g) => g.id === 'microsoft365'));
     assert.ok(out.results.find((r) => r.email === 'c@no-mx.test').verdict === 'drop');
+  });
+});
+
+describe('providers', () => {
+  it('builds Mailgun form fields including custom headers', () => {
+    const form = buildMailgunForm({
+      from: 'Northwind <hello@mg.northwind.example>',
+      to: 'a@x.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      text: 'Hi',
+      headers: { 'List-Unsubscribe': '<https://x/u/1>' },
+    });
+    assert.equal(form.get('from'), 'Northwind <hello@mg.northwind.example>');
+    assert.equal(form.get('to'), 'a@x.com');
+    assert.equal(form.get('h:List-Unsubscribe'), '<https://x/u/1>');
+    assert.equal(mailgunDomain({ username: 'postmaster@mg.northwind.example' }), 'mg.northwind.example');
+    assert.equal(mailgunApiBase({ region: 'eu' }), 'https://api.eu.mailgun.net');
+  });
+
+  it('builds SendGrid v3 payload', () => {
+    const payload = buildSendGridPayload({
+      fromName: 'Northwind',
+      fromEmail: 'hello@northwind.example',
+      to: 'a@x.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      text: 'Hi',
+      headers: { 'List-Unsubscribe': '<https://x/u/1>' },
+    });
+    assert.equal(payload.from.email, 'hello@northwind.example');
+    assert.equal(payload.personalizations[0].to[0].email, 'a@x.com');
+    assert.equal(payload.content[1].type, 'text/html');
+    assert.equal(payload.headers['List-Unsubscribe'], '<https://x/u/1>');
+  });
+
+  it('builds SES v2 payload with headers', () => {
+    const payload = buildSesPayload({
+      from: '"Northwind" <hello@northwind.example>',
+      to: 'a@x.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      headers: { 'List-Unsubscribe': '<https://x/u/1>', 'Reply-To': 'support@northwind.example' },
+    });
+    assert.equal(payload.FromEmailAddress, '"Northwind" <hello@northwind.example>');
+    assert.deepEqual(payload.ReplyToAddresses, ['support@northwind.example']);
+    assert.equal(payload.Content.Simple.Headers[0].Name, 'List-Unsubscribe');
+    assert.ok(!payload.EmailTags);
+  });
+
+  it('signs AWS SigV4 GET like the IAM ListUsers example', () => {
+    const signed = signAwsV4({
+      method: 'GET',
+      url: 'https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08',
+      body: '',
+      region: 'us-east-1',
+      service: 'iam',
+      accessKeyId: 'AKIDEXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+      amzDate: '20150830T123600Z',
+    });
+    assert.match(signed.canonicalRequest, /^GET\n\/\nAction=ListUsers&Version=2010-05-08\n/);
+    assert.equal(signed.signature, '5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7');
+  });
+
+  it('routes HTTP API kinds', () => {
+    assert.equal(usesHttpApi({ kind: 'mailgun', auth_mode: 'api' }), true);
+    assert.equal(usesHttpApi({ kind: 'mailgun', auth_mode: 'smtp' }), false);
+    assert.equal(usesHttpApi({ kind: 'postfix' }), false);
+    assert.equal(usesHttpApi({ kind: 'aws', auth_mode: 'api' }), true);
   });
 });

@@ -153,6 +153,7 @@ addColumn('senders', 'provider', "TEXT NOT NULL DEFAULT ''");
 addColumn('senders', 'sms_gateway', "TEXT NOT NULL DEFAULT ''");
 addColumn('senders', 'office_tenant_id', 'INTEGER');
 addColumn('senders', 'auth_mode', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'region', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'company', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom1', "TEXT NOT NULL DEFAULT ''");

@@ -32,6 +32,26 @@ export const SENDER_KINDS = [
     label: 'Office 365',
     blurb: 'Your Microsoft 365 tenant via Graph sendMail or smtp.office365.com SMTP AUTH.',
   },
+  {
+    id: 'mailgun',
+    label: 'Mailgun',
+    blurb: 'Your Mailgun domain via smtp.mailgun.org or the HTTP messages API.',
+  },
+  {
+    id: 'sendgrid',
+    label: 'SendGrid',
+    blurb: 'Your SendGrid account via smtp.sendgrid.net or the v3 mail/send API.',
+  },
+  {
+    id: 'postfix',
+    label: 'Postfix',
+    blurb: 'Your own Postfix / mail-relay host. Auth is optional if the server allowlists this IP.',
+  },
+  {
+    id: 'aws',
+    label: 'AWS SES',
+    blurb: 'Amazon SES in your AWS account — SMTP credentials or SigV4 HTTP API.',
+  },
 ];
 
 export const SMTP_PRESETS = [
@@ -206,6 +226,88 @@ export const SMTP_PRESETS = [
     secure: false,
     hint: 'Sends a short text as email to number@carrier-gateway. Set the gateway domain on the sender (e.g. txt.att.net).',
   },
+  {
+    id: 'mailgun-smtp',
+    kind: 'mailgun',
+    auth_mode: 'smtp',
+    label: 'Mailgun SMTP',
+    host: 'smtp.mailgun.org',
+    port: 587,
+    secure: false,
+    hint: 'Username is usually postmaster@YOUR_DOMAIN. Password is the SMTP password from the Mailgun domain settings. EU accounts use smtp.eu.mailgun.org.',
+  },
+  {
+    id: 'mailgun-api',
+    kind: 'mailgun',
+    auth_mode: 'api',
+    label: 'Mailgun HTTP API',
+    host: 'api.mailgun.net',
+    port: 443,
+    secure: true,
+    hint: 'Username = sending domain (mg.yourdomain.com). Password = Private API key (key-…). From address must be on that domain.',
+  },
+  {
+    id: 'sendgrid-smtp',
+    kind: 'sendgrid',
+    auth_mode: 'smtp',
+    label: 'SendGrid SMTP',
+    host: 'smtp.sendgrid.net',
+    port: 587,
+    secure: false,
+    username: 'apikey',
+    hint: 'Username must be the literal word apikey. Password is a SendGrid API key with Mail Send permission.',
+  },
+  {
+    id: 'sendgrid-api',
+    kind: 'sendgrid',
+    auth_mode: 'api',
+    label: 'SendGrid HTTP API',
+    host: 'api.sendgrid.com',
+    port: 443,
+    secure: true,
+    username: 'apikey',
+    hint: 'Password is a SendGrid API key. From email must be a verified SendGrid sender identity.',
+  },
+  {
+    id: 'postfix',
+    kind: 'postfix',
+    auth_mode: 'smtp',
+    label: 'Postfix / local relay',
+    host: '',
+    port: 25,
+    secure: false,
+    hint: 'Point at your Postfix host. Leave username and password blank if the server allowlists this machine (mynetworks). Prefer 587 + STARTTLS when auth is enabled.',
+  },
+  {
+    id: 'postfix-submission',
+    kind: 'postfix',
+    auth_mode: 'smtp',
+    label: 'Postfix submission (587)',
+    host: '',
+    port: 587,
+    secure: false,
+    hint: 'Submission port with STARTTLS. Use mailbox credentials if smtpd_sasl_auth is on.',
+  },
+  {
+    id: 'aws-ses-smtp',
+    kind: 'aws',
+    auth_mode: 'smtp',
+    label: 'Amazon SES SMTP',
+    host: 'email-smtp.us-east-1.amazonaws.com',
+    port: 587,
+    secure: false,
+    hint: 'Create SMTP credentials in the SES console (not your IAM password). Pick the region that matches the verified identity.',
+  },
+  {
+    id: 'aws-ses-api',
+    kind: 'aws',
+    auth_mode: 'api',
+    label: 'Amazon SES HTTP API',
+    host: 'email.us-east-1.amazonaws.com',
+    port: 443,
+    secure: true,
+    hint: 'IAM access key + secret with ses:SendEmail. Username = Access key ID. From address must be a verified SES identity in that region.',
+  },
 ];
 
 export const SMS_GATEWAYS = [
@@ -218,6 +320,104 @@ export const SMS_GATEWAYS = [
   { id: 'custom', label: 'Custom domain / pattern', domain: '' },
 ];
 
+export const MAILGUN_REGIONS = [
+  { id: 'us', label: 'US — smtp.mailgun.org / api.mailgun.net', smtpHost: 'smtp.mailgun.org', apiHost: 'api.mailgun.net' },
+  { id: 'eu', label: 'EU — smtp.eu.mailgun.org / api.eu.mailgun.net', smtpHost: 'smtp.eu.mailgun.org', apiHost: 'api.eu.mailgun.net' },
+];
+
+export const AWS_SES_REGIONS = [
+  'us-east-1',
+  'us-east-2',
+  'us-west-1',
+  'us-west-2',
+  'ca-central-1',
+  'eu-west-1',
+  'eu-west-2',
+  'eu-west-3',
+  'eu-central-1',
+  'eu-north-1',
+  'ap-northeast-1',
+  'ap-northeast-2',
+  'ap-northeast-3',
+  'ap-southeast-1',
+  'ap-southeast-2',
+  'ap-south-1',
+  'sa-east-1',
+  'me-south-1',
+  'af-south-1',
+];
+
+export function awsSesSmtpHost(region) {
+  return `email-smtp.${region || 'us-east-1'}.amazonaws.com`;
+}
+
+export function awsSesApiHost(region) {
+  return `email.${region || 'us-east-1'}.amazonaws.com`;
+}
+
 export function presetById(id) {
   return SMTP_PRESETS.find((p) => p.id === id) || null;
+}
+
+export function applyProviderDefaults({ kind, auth_mode = '', region = '', host = '', port, username = '' }) {
+  const mode = auth_mode || (kind === 'mailgun' || kind === 'sendgrid' || kind === 'aws' ? 'smtp' : '');
+  let hostVal = host;
+  let portVal = port;
+  let userVal = username;
+  let regionVal = region;
+  let secureVal;
+
+  if (kind === 'mailgun') {
+    regionVal = regionVal === 'eu' ? 'eu' : 'us';
+    const r = MAILGUN_REGIONS.find((x) => x.id === regionVal);
+    if (mode === 'api') {
+      hostVal = hostVal && hostVal.startsWith('api') ? hostVal : r.apiHost;
+      portVal = 443;
+      secureVal = true;
+    } else {
+      hostVal = hostVal && hostVal.startsWith('smtp') ? hostVal : r.smtpHost;
+      portVal = portVal || 587;
+      secureVal = Number(portVal) === 465;
+    }
+  }
+
+  if (kind === 'sendgrid') {
+    if (mode === 'api') {
+      hostVal = 'api.sendgrid.com';
+      portVal = 443;
+      secureVal = true;
+    } else {
+      hostVal = hostVal || 'smtp.sendgrid.net';
+      portVal = portVal || 587;
+      secureVal = Number(portVal) === 465;
+    }
+    userVal = userVal || 'apikey';
+  }
+
+  if (kind === 'aws') {
+    regionVal = regionVal || 'us-east-1';
+    if (mode === 'api') {
+      hostVal = awsSesApiHost(regionVal);
+      portVal = 443;
+      secureVal = true;
+    } else {
+      hostVal = awsSesSmtpHost(regionVal);
+      portVal = portVal || 587;
+      secureVal = Number(portVal) === 465;
+    }
+  }
+
+  if (kind === 'postfix') {
+    portVal = portVal || 25;
+    if (secureVal === undefined) secureVal = Number(portVal) === 465;
+  }
+
+  return {
+    host: hostVal,
+    port: portVal,
+    username: userVal,
+    region: regionVal,
+    auth_mode: mode,
+    secure: secureVal,
+  };
 }
