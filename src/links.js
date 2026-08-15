@@ -5,8 +5,56 @@ const genCode = customAlphabet('abcdefghijkmnopqrstuvwxyz23456789', 8);
 
 export const newLinkCode = () => genCode();
 
-export function shortUrl(code) {
-  return `${config.appBaseUrl}/l/${code}`;
+export function shortUrl(code, user) {
+  return `${linkBaseFor(user)}/l/${code}`;
+}
+
+const RISKY_LINK_TLDS = new Set(['su', 'ru', 'xyz', 'top', 'click', 'rest', 'cfd', 'shop', 'bond', 'zip', 'mov']);
+
+export function linkBaseFor(user) {
+  const raw = String(user?.link_base_url || '').trim();
+  if (raw) return raw.replace(/\/$/, '');
+  return config.appBaseUrl;
+}
+
+/** Normalize a client tracking host. Must be https, public DNS, not a brand lookalike. */
+export function parseLinkBase(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return { ok: true, url: '', warnings: [] };
+  let u;
+  try {
+    u = new URL(s.includes('://') ? s : `https://${s}`);
+  } catch {
+    return { ok: false, error: 'Not a valid URL. Use https://go.yourbrand.com' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return { ok: false, error: 'Only http(s) tracking hosts are allowed' };
+  }
+  const host = u.hostname.toLowerCase();
+  if (!host || host === 'localhost' || isPrivateHost(host) || isIpHost(host)) {
+    return { ok: false, error: 'Use a public hostname you own, not localhost or an IP' };
+  }
+  if (!host.includes('.')) {
+    return { ok: false, error: 'Hostname needs a real TLD (example: go.yourbrand.com)' };
+  }
+  const brand = lookalikeBrand(host);
+  if (brand) {
+    return { ok: false, error: `That host looks like a ${brand} impersonation. Use the client’s real brand.` };
+  }
+  if (isReservedBrandHost(host)) {
+    return { ok: false, error: 'That host belongs to a major brand. Use a domain the client owns.' };
+  }
+  if (PUBLIC_SHORTENERS.has(host) || PUBLIC_SHORTENERS.has(registrable(host))) {
+    return { ok: false, error: 'Use a hostname the client owns, not a public shortener.' };
+  }
+  const warnings = [];
+  if (u.protocol !== 'https:') warnings.push('Use HTTPS. HTTP tracking links get rewritten or blocked.');
+  const tld = host.split('.').pop();
+  if (RISKY_LINK_TLDS.has(tld)) {
+    warnings.push(`.${tld} is a weak TLD for email clicks. Prefer a subdomain of the client’s sending domain.`);
+  }
+  const url = `https://${host}`;
+  return { ok: true, url, host, warnings };
 }
 
 const PRIVATE = [
@@ -105,6 +153,11 @@ function lookalikeBrand(host) {
     if (!ok) return b.name;
   }
   return null;
+}
+
+function isReservedBrandHost(host) {
+  const h = host.replace(/^www\./, '');
+  return BRANDS.some((b) => b.hosts.some((real) => h === real || h.endsWith('.' + real)));
 }
 
 function scoreOf(issues, warnings, extra = 0) {

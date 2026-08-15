@@ -12,10 +12,10 @@ import {
 const router = Router();
 router.use(requireAuth, requireFeature('links'));
 
-function rowOut(r) {
+function rowOut(r, user) {
   return {
     ...r,
-    short_url: shortUrl(r.code),
+    short_url: shortUrl(r.code, user),
   };
 }
 
@@ -27,7 +27,7 @@ router.get('/', (req, res) => {
        FROM short_links WHERE user_id = ? ORDER BY id DESC`
     )
     .all(req.user.id);
-  res.json(rows.map(rowOut));
+  res.json(rows.map((r) => rowOut(r, req.user)));
 });
 
 router.post('/validate', async (req, res) => {
@@ -94,7 +94,7 @@ router.post('/', async (req, res) => {
       report.verdict
     );
   const row = db.prepare('SELECT * FROM short_links WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json({ ...rowOut(row), report });
+  res.status(201).json({ ...rowOut(row, req.user), report });
 });
 
 router.post('/wrap-html', async (req, res) => {
@@ -113,7 +113,7 @@ router.post('/wrap-html', async (req, res) => {
       `INSERT INTO short_links (user_id, label, code, destination, mode, last_score, last_verdict, last_checked)
        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
     ).run(req.user.id, report.host, code, report.url, mode, report.score, report.verdict);
-    const short = shortUrl(code);
+    const short = shortUrl(code, req.user);
     out = out.split(u).join(short);
     created.push({ from: u, to: short });
   }
@@ -129,7 +129,7 @@ router.get('/:id/clicks', (req, res) => {
       `SELECT id, kind, marker, created_at FROM link_clicks WHERE link_id = ? ORDER BY id DESC LIMIT 100`
     )
     .all(id);
-  res.json({ link: rowOut(link), clicks });
+  res.json({ link: rowOut(link, req.user), clicks });
 });
 
 router.delete('/:id', (req, res) => {

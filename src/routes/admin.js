@@ -14,7 +14,7 @@ router.use(requireAuth, requireAdmin);
 router.get('/overview', (req, res) => {
   const users = db
     .prepare(
-      `SELECT id, email, role, daily_quota, active, license_plan, license_expires_at, features, notes, last_login, created_at
+      `SELECT id, email, role, daily_quota, active, license_plan, license_expires_at, features, notes, last_login, link_base_url, created_at
        FROM users ORDER BY id DESC`
     )
     .all()

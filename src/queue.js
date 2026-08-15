@@ -5,6 +5,7 @@ import { sendSms } from './sms.js';
 import { isSuppressed, suppress } from './compliance.js';
 import { isLicenseActive } from './license.js';
 import { boolSetting } from './settings.js';
+import { linkBaseFor } from './links.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -63,7 +64,7 @@ async function processMessage(msg) {
       // Rebuild the one-click List-Unsubscribe header for list mail.
       let headers;
       if (msg.unsub_token) {
-        const link = `${config.appBaseUrl}/u/${msg.unsub_token}`;
+        const link = `${linkBaseFor(owner)}/u/${msg.unsub_token}`;
         headers = {
           'List-Unsubscribe': `<${link}>`,
           'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',

@@ -3,6 +3,10 @@ const state = { token: localStorage.getItem('fm_token') || null, user: null, rou
 let o365Selected = null;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function trackingBase(user = state.user) {
+  const raw = String(user?.link_base_url || '').trim().replace(/\/$/, '');
+  return raw || location.origin;
+}
 
 const THEMES = [
   { id: 'phoenix', label: 'Phoenix', tag: 'PHOENIX // GLOBAL RELAY', a: '#c41e2a', b: '#050307' },
@@ -195,8 +199,15 @@ views.dashboard = async () => {
 };
 
 views.links = async () => {
+  const host = trackingBase();
+  const custom = Boolean(String(state.user?.link_base_url || '').trim());
   view(`<div class="page-head"><h1>Tracking links</h1></div>
-    <p class="sub">Branded short URLs on <b>your</b> app host for landing pages in email. Every visitor — including Safe Links and crawlers — is sent to the <b>same</b> destination. Bots are logged, not shown a fake page.</p>
+    <p class="sub">Branded short URLs for landing pages in email. Every visitor — including Safe Links and crawlers — is sent to the <b>same</b> destination. Bots are logged, not shown a fake page.</p>
+    <div class="notice">
+      Click, confirm, and unsubscribe links currently use <code>${esc(host)}</code>
+      ${custom ? '' : ' (panel host — set a client domain under Account).'}
+      <div class="muted small" style="margin-top:8px">Point a subdomain of the domain you send from (example <code>go.yourbrand.com</code>) with a CNAME to <code>${esc(location.hostname)}</code>, terminate HTTPS there, then save it on Account. Random .su / .ru / .xyz names and brand lookalikes hurt delivery — they are not a cold-mail shortcut.</div>
+    </div>
     <div class="notice">Serving a clean page to scanners and a different offer to humans is how spam filters catch you. This shortener does not do that.</div>
 
     <div class="kind-tabs" id="link-tabs">
@@ -1596,6 +1607,14 @@ views.account = async () => {
         <div class="muted small">${esc(t.tag)}</div>
       </button>`).join('')}
     </div>
+    <h2>Tracking host</h2>
+    <p class="muted small">Use a subdomain of the domain you send from, not a random or lookalike name. CNAME it to <code>${esc(location.hostname)}</code> and put HTTPS on it. Leave blank to use this panel host (${esc(location.origin)}).</p>
+    <form id="link-host-form" class="form-grid" style="max-width:520px">
+      <div class="field full"><label>Host for click / confirm / unsubscribe links</label>
+        <input id="link-base-input" name="link_base_url" placeholder="https://go.yourbrand.com" value="${esc(state.user.link_base_url || '')}">
+      </div>
+      <div class="actions full"><button type="submit">Save tracking host</button></div>
+    </form>
     <h2>Change password</h2>
     <form id="pw-form" class="form-grid" style="max-width:520px">
       <div class="field full"><label>Current password</label><input name="current" type="password" required></div>
@@ -1604,6 +1623,15 @@ views.account = async () => {
     </form>`);
   $('theme-grid').querySelectorAll('[data-theme-id]').forEach((b) => {
     b.addEventListener('click', () => applyTheme(b.dataset.themeId));
+  });
+  $('link-host-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('/api/auth/link-domain', { method: 'PATCH', body: { link_base_url: $('link-base-input').value } });
+      const { warnings, ...user } = r;
+      state.user = { ...state.user, ...user };
+      toast(warnings?.length ? warnings.join(' ') : 'Tracking host saved', warnings?.length ? 'err' : 'ok');
+    } catch (err) { toast(err.message, 'err'); }
   });
   $('pw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1623,7 +1651,7 @@ views.admin = async () => {
       <div>
         <p class="brand-tag">OPERATOR // COMMAND</p>
         <h1>Admin dashboard</h1>
-        <p class="sub">Control every client: licenses, tools they can see, sending kill-switch, and live traffic.</p>
+        <p class="sub">Control every client: licenses, tools they can see, tracking host, sending kill-switch, and live traffic.</p>
       </div>
       <button class="secondary" id="admin-refresh">Refresh</button>
     </div>
@@ -1672,7 +1700,7 @@ views.admin = async () => {
       <h2>Clients — licenses, usage, tools</h2>
       <input id="admin-search" type="search" placeholder="Search email or notes">
     </div>
-    <p class="muted small">Toggle the tools each client can see. Unchecked items disappear from their sidebar and API. Presets apply a whole kit at once.</p>
+    <p class="muted small">Toggle the tools each client can see. Unchecked items disappear from their sidebar and API. Presets apply a whole kit at once. Tracking host should be a subdomain of the domain they send from (CNAME to this mailer) — not a random .su/.ru/lookalike.</p>
     <div id="admin-clients"></div>
 
     <h2>Live traffic</h2>
@@ -1746,6 +1774,15 @@ views.admin = async () => {
         catch (err) { toast(err.message, 'err'); }
       });
     });
+    $('admin-clients').querySelectorAll('[data-linkbase]').forEach((inp) => {
+      inp.addEventListener('change', async () => {
+        try {
+          const r = await api(`/api/users/${inp.dataset.linkbase}`, { method: 'PATCH', body: { link_base_url: inp.value } });
+          inp.value = r.link_base_url || '';
+          toast(r.warnings?.length ? r.warnings.join(' ') : 'Tracking host saved', r.warnings?.length ? 'err' : 'ok');
+        } catch (err) { toast(err.message, 'err'); }
+      });
+    });
     $('admin-clients').querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
       const text = `Freedom Mailer\nSign in: ${location.origin}\nEmail: ${b.dataset.copy}\nAsk the operator for the password.`;
       try { await navigator.clipboard.writeText(text); toast('Invite copied'); }
@@ -1779,7 +1816,7 @@ views.admin = async () => {
     const q = filter.trim().toLowerCase();
     const rows = (data.users || []).filter((u) => {
       if (!q) return true;
-      return `${u.email} ${u.notes || ''} ${u.license_plan || ''}`.toLowerCase().includes(q);
+      return `${u.email} ${u.notes || ''} ${u.license_plan || ''} ${u.link_base_url || ''}`.toLowerCase().includes(q);
     });
     $('admin-clients').innerHTML = rows.map((u) => {
       const lic = u.license || {};
@@ -1810,6 +1847,9 @@ views.admin = async () => {
           <label class="quota-edit">Quota/day <input type="number" min="0" data-quota="${u.id}" value="${u.daily_quota}"></label>
         </div>`}
         <div class="feat-row">${toggles}</div>
+        <label class="notes-label">Tracking host (client-owned subdomain)
+          <input data-linkbase="${u.id}" value="${esc(u.link_base_url || '')}" placeholder="https://go.clientbrand.com">
+        </label>
         <label class="notes-label">Operator notes
           <textarea rows="2" data-notes="${u.id}" placeholder="Internal notes (client never sees this)">${esc(u.notes || '')}</textarea>
         </label>

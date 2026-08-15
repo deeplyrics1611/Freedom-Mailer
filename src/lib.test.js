@@ -11,7 +11,7 @@ import {
   OFFICE_SMTP,
   GRAPH_PERMISSIONS,
 } from './office365.js';
-import { staticValidate, classifyClient, extractUrls } from './links.js';
+import { staticValidate, classifyClient, extractUrls, parseLinkBase, shortUrl, linkBaseFor } from './links.js';
 import { inspectLocal, classifyMx, debounceEmails } from './deliverability.js';
 import {
   buildMailgunForm,
@@ -171,6 +171,25 @@ describe('links', () => {
   it('extracts urls from html', () => {
     const urls = extractUrls('<a href="https://a.example/x">x</a> https://b.example/y');
     assert.deepEqual(urls.sort(), ['https://a.example/x', 'https://b.example/y']);
+  });
+
+  it('accepts a client-owned tracking host and rejects lookalikes', () => {
+    const ok = parseLinkBase('https://go.northwind.com');
+    assert.equal(ok.ok, true);
+    assert.equal(ok.url, 'https://go.northwind.com');
+    assert.equal(parseLinkBase('go.northwind.com').url, 'https://go.northwind.com');
+    assert.equal(parseLinkBase('').ok, true);
+    assert.equal(parseLinkBase('').url, '');
+    assert.equal(parseLinkBase('https://login-microsoft.xyz').ok, false);
+    assert.equal(parseLinkBase('https://outlook.com').ok, false);
+    assert.equal(parseLinkBase('https://bit.ly').ok, false);
+    assert.equal(parseLinkBase('https://127.0.0.1').ok, false);
+    assert.equal(parseLinkBase('https://8.8.8.8').ok, false);
+    const weak = parseLinkBase('go.client.su');
+    assert.equal(weak.ok, true);
+    assert.ok(weak.warnings.some((w) => w.includes('.su')));
+    assert.equal(shortUrl('abc23456', { link_base_url: 'https://go.northwind.com' }), 'https://go.northwind.com/l/abc23456');
+    assert.equal(linkBaseFor({}), linkBaseFor(null));
   });
 });
 

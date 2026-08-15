@@ -98,7 +98,7 @@ router.post('/:id/subscribe', (req, res) => {
   res.status(201).json({
     ok: true,
     status,
-    confirm_url: preConfirmed ? null : confirmUrl(token),
+    confirm_url: preConfirmed ? null : confirmUrl(token, req.user),
   });
 });
 

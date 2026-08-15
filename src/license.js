@@ -81,6 +81,7 @@ export function publicUser(user, now = new Date()) {
     features: parseFeatures(user.features),
     notes: user.notes || '',
     last_login: user.last_login || null,
+    link_base_url: user.link_base_url || '',
     created_at: user.created_at,
   };
 }

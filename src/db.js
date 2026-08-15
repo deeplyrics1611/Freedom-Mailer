@@ -159,6 +159,7 @@ addColumn('users', 'license_expires_at', 'TEXT');
 addColumn('users', 'features', "TEXT NOT NULL DEFAULT '{}'");
 addColumn('users', 'notes', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'last_login', 'TEXT');
+addColumn('users', 'link_base_url', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'company', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'custom1', "TEXT NOT NULL DEFAULT ''");

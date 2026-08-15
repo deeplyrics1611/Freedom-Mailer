@@ -1,7 +1,7 @@
 import { customAlphabet } from 'nanoid';
-import { config } from './config.js';
 import { db } from './db.js';
 import { renderTemplate as mergeFields } from './placeholders.js';
+import { linkBaseFor } from './links.js';
 
 const genToken = customAlphabet('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', 32);
 export const newToken = () => genToken();
@@ -20,18 +20,18 @@ export function suppress(userId, email, reason = 'manual') {
   ).run(userId, email.toLowerCase(), reason);
 }
 
-export function confirmUrl(token) {
-  return `${config.appBaseUrl}/c/${token}`;
+export function confirmUrl(token, user) {
+  return `${linkBaseFor(user)}/c/${token}`;
 }
-export function unsubscribeUrl(token) {
-  return `${config.appBaseUrl}/u/${token}`;
+export function unsubscribeUrl(token, user) {
+  return `${linkBaseFor(user)}/u/${token}`;
 }
 
 // Inject a required unsubscribe footer + List-Unsubscribe header data.
 // Every marketing email must carry a working one-click unsubscribe (CAN-SPAM,
 // GDPR, RFC 8058). `token` ties the link to a specific subscription.
-export function withUnsubscribeFooter({ html, text }, token) {
-  const link = unsubscribeUrl(token);
+export function withUnsubscribeFooter({ html, text }, token, user) {
+  const link = unsubscribeUrl(token, user);
   const footerHtml = `
     <hr style="border:none;border-top:1px solid #ddd;margin:24px 0" />
     <p style="font-size:12px;color:#888">

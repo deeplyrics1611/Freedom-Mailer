@@ -213,7 +213,7 @@ function enqueueCampaign(user, campaign, recipients, sender) {
         continue;
       }
 
-      const withFooter = withUnsubscribeFooter({ html: baseHtml, text: baseText }, token);
+      const withFooter = withUnsubscribeFooter({ html: baseHtml, text: baseText }, token, user);
       insert.run(
         user.id,
         'email',

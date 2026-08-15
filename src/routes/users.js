@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { hashPassword, requireAuth, requireAdmin } from '../auth.js';
 import { LICENSE_PLANS, planById, computeExpiry, extendExpiry, publicUser } from '../license.js';
 import { parseFeatures } from '../features.js';
+import { parseLinkBase } from '../links.js';
 import { logAdmin } from '../audit.js';
 
 const router = Router();
@@ -15,7 +16,7 @@ router.get('/plans', (req, res) => {
 router.get('/', (req, res) => {
   const users = db
     .prepare(
-      'SELECT id, email, role, daily_quota, active, license_plan, license_expires_at, features, notes, last_login, created_at FROM users ORDER BY id'
+      'SELECT id, email, role, daily_quota, active, license_plan, license_expires_at, features, notes, last_login, link_base_url, created_at FROM users ORDER BY id'
     )
     .all();
   res.json(users.map((u) => publicUser(u)));
@@ -65,7 +66,7 @@ router.patch('/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'Not found' });
-  const { role, daily_quota, active, password, license_plan, license_action, notes, features } = req.body || {};
+  const { role, daily_quota, active, password, license_plan, license_action, notes, features, link_base_url } = req.body || {};
   if (role !== undefined) {
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role === 'admin' ? 'admin' : 'user', id);
     if (role === 'admin') {
@@ -95,6 +96,13 @@ router.patch('/:id', (req, res) => {
   if (notes !== undefined) {
     db.prepare('UPDATE users SET notes = ? WHERE id = ?').run(String(notes).slice(0, 500), id);
   }
+  let linkWarnings = [];
+  if (link_base_url !== undefined) {
+    const parsed = parseLinkBase(link_base_url);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    db.prepare('UPDATE users SET link_base_url = ? WHERE id = ?').run(parsed.url, id);
+    linkWarnings = parsed.warnings || [];
+  }
   if (features && typeof features === 'object') {
     db.prepare('UPDATE users SET features = ? WHERE id = ?').run(JSON.stringify(parseFeatures(features)), id);
   }
@@ -107,8 +115,9 @@ router.patch('/:id', (req, res) => {
     license_plan,
     license_action,
     notes: notes !== undefined,
+    link_base_url: link_base_url !== undefined,
   });
-  res.json(publicUser(updated));
+  res.json({ ...publicUser(updated), warnings: linkWarnings });
 });
 
 router.delete('/:id', (req, res) => {

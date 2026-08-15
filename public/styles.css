@@ -630,7 +630,7 @@ pre {
 }
 .quota-edit input { width: 100px; }
 .notes-label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
-.notes-label textarea { margin-top: 4px; }
+.notes-label textarea, .notes-label input { margin-top: 4px; width: 100%; }
 
 @media (max-width: 1100px) {
   .compose { grid-template-columns: 1fr; }

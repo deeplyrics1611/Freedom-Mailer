@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { verifyPassword, hashPassword, signToken, requireAuth } from '../auth.js';
 import { licenseStatus, publicUser } from '../license.js';
 import { allSettings } from '../settings.js';
+import { parseLinkBase } from '../links.js';
 
 const router = Router();
 
@@ -37,6 +38,14 @@ router.get('/me', requireAuth, (req, res) => {
     maintenance: settings.maintenance === '1',
     pause_sends: settings.pause_sends === '1',
   });
+});
+
+router.patch('/link-domain', requireAuth, (req, res) => {
+  const parsed = parseLinkBase(req.body?.link_base_url);
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  db.prepare('UPDATE users SET link_base_url = ? WHERE id = ?').run(parsed.url, req.user.id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ ...publicUser(user), warnings: parsed.warnings || [] });
 });
 
 router.post('/change-password', requireAuth, (req, res) => {
