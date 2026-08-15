@@ -97,6 +97,7 @@ export function signAwsV4({
   accessKeyId,
   secretAccessKey,
   amzDate,
+  extraHeaders = {},
 }) {
   const u = new URL(url);
   const dateStamp = amzDate.slice(0, 8);
@@ -105,7 +106,11 @@ export function signAwsV4({
     host: u.host,
     'x-amz-date': amzDate,
   };
-  if (body) headers['content-type'] = 'application/json';
+  for (const [k, v] of Object.entries(extraHeaders)) {
+    if (v == null || v === '') continue;
+    headers[k.toLowerCase()] = String(v);
+  }
+  if (body && !headers['content-type']) headers['content-type'] = 'application/json';
   const signedHeaderNames = Object.keys(headers).sort();
   const canonicalHeaders = signedHeaderNames.map((k) => `${k}:${headers[k]}\n`).join('');
   const signedHeaders = signedHeaderNames.join(';');

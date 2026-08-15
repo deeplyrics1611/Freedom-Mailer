@@ -290,8 +290,10 @@ describe('providers', () => {
       accessKeyId: 'AKIDEXAMPLE',
       secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
       amzDate: '20150830T123600Z',
+      extraHeaders: { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8' },
     });
     assert.match(signed.canonicalRequest, /^GET\n\/\nAction=ListUsers&Version=2010-05-08\n/);
+    assert.match(signed.canonicalRequest, /content-type;host;x-amz-date/);
     assert.equal(signed.signature, '5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7');
   });
 
