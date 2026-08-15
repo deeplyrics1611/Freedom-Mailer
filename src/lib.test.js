@@ -92,6 +92,8 @@ describe('letters', () => {
     assert.ok(ids.includes('invoice'));
     assert.ok(ids.includes('signature_request'));
     assert.ok(ids.includes('video_meeting'));
+    assert.match(generateLetter('invoice', { company: 'Northwind Labs', amount: '$10' }).html, /You have an invoice/);
+    assert.equal(generateLetter('invoice', {}, 'en', { variant: 5 }).variant, 5);
   });
 
   it('does not impersonate third-party brands', () => {

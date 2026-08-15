@@ -135,7 +135,7 @@ function renderNav() {
   }
 }
 
-function go(route) { state.route = route; renderNav(); views[route](); }
+function go(route) { state.route = route; renderNav(); return views[route](); }
 
 async function boot() {
   state.user = await api('/api/auth/me');
@@ -562,13 +562,18 @@ Jane Doe <jane@example.com>"></textarea>
           <div id="c-parse-box" class="parse-box hidden"></div>
 
           <h2>HTML letters</h2>
-          <p class="muted small">These are <b>your</b> company notices (sign, invoice, file share, meeting). They are not third-party brand clones.</p>
+          <p class="muted small">Invoice, e-sign, meeting invite, and shared files — real HTML from <b>your</b> company. They are not Adobe, DocuSign, Zoom, or SharePoint messages. Pick a layout, generate, then send from your sender.</p>
+          <div class="notice">No third-party brand logos and no layout clones. Put your own pay / sign / join / files URL in the button.</div>
           <div id="letter-grid" class="letter-grid"></div>
           <div id="letter-fields" class="form-grid"></div>
           <div class="actions">
             <button type="button" class="secondary" id="c-gen" disabled>Generate letter</button>
+            <button type="button" class="secondary" id="c-five" disabled>5 layouts</button>
+            <button type="button" class="secondary" id="c-dl-html">Download HTML</button>
+            <select id="c-variant" style="max-width:160px"></select>
             <select id="c-locale" style="max-width:140px"><option value="en">English</option><option value="ja">日本語</option></select>
           </div>
+          <div id="c-var-box" class="letter-grid hidden" style="margin-top:8px"></div>
 
           <h2>Body</h2>
           <div class="chips" id="ph-chips"></div>
@@ -639,8 +644,12 @@ Jane Doe <jane@example.com>"></textarea>
 
   let selectedKind = '';
   const letterMap = Object.fromEntries(letters.letters.map((l) => [l.id, l]));
+  $('c-variant').innerHTML = (letters.variants || [
+    { id: 1, label: 'Letterhead' }, { id: 2, label: 'Ledger' }, { id: 3, label: 'Banner' },
+    { id: 4, label: 'Rail' }, { id: 5, label: 'Spotlight' },
+  ]).map((v) => `<option value="${v.id}">${esc(v.label)}</option>`).join('');
   $('letter-grid').innerHTML = letters.letters.map((l) =>
-    `<button type="button" class="letter-card" data-kind="${l.id}">
+    `<button type="button" class="letter-card" data-kind="${l.id}" style="border-color:${esc(l.accent || '')}33">
       <b>${esc(l.title)}</b><span>${esc(l.blurb)}</span></button>`
   ).join('');
   $('ph-chips').innerHTML = letters.placeholders.map((p) =>
@@ -655,8 +664,9 @@ Jane Doe <jane@example.com>"></textarea>
   function renderLetterFields() {
     const meta = letterMap[selectedKind];
     const box = $('letter-fields');
-    if (!meta) { box.innerHTML = ''; $('c-gen').disabled = true; return; }
+    if (!meta) { box.innerHTML = ''; $('c-gen').disabled = true; $('c-five').disabled = true; return; }
     $('c-gen').disabled = false;
+    $('c-five').disabled = false;
     box.innerHTML = meta.fields.map((f) =>
       `<div class="field ${['note','description','agenda'].includes(f.key) ? 'full' : ''}">
         <label>${esc(f.label)}</label>
@@ -671,20 +681,58 @@ Jane Doe <jane@example.com>"></textarea>
     renderLetterFields();
   }));
 
-  $('c-gen').addEventListener('click', async () => {
+  function letterFields() {
     const fields = {};
     $('letter-fields').querySelectorAll('[data-fk]').forEach((i) => { if (i.value) fields[i.dataset.fk] = i.value; });
+    return fields;
+  }
+
+  function applyLetter(r) {
+    $('c-subject').value = r.subject;
+    $('c-html').value = r.html;
+    $('c-text').value = r.text;
+    refreshPreview();
+  }
+
+  $('c-gen').addEventListener('click', async () => {
     try {
       const r = await api('/api/letters/generate', {
         method: 'POST',
-        body: { kind: selectedKind, fields, locale: $('c-locale').value },
+        body: { kind: selectedKind, fields: letterFields(), locale: $('c-locale').value, variant: $('c-variant').value },
       });
-      $('c-subject').value = r.subject;
-      $('c-html').value = r.html;
-      $('c-text').value = r.text;
+      applyLetter(r);
       toast('Letter generated');
-      refreshPreview();
     } catch (err) { toast(err.message, 'err'); }
+  });
+  $('c-five').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/letters/variations', {
+        method: 'POST',
+        body: { kind: selectedKind, fields: letterFields(), locale: $('c-locale').value },
+      });
+      const box = $('c-var-box');
+      box.classList.remove('hidden');
+      box.innerHTML = (r.variations || []).map((v) =>
+        `<button type="button" class="letter-card" data-var="${v.variant}"><b>Layout ${v.variant}</b><span>${esc(v.subject).slice(0, 48)}</span></button>`
+      ).join('');
+      box.querySelectorAll('[data-var]').forEach((b) => b.addEventListener('click', () => {
+        const pick = r.variations.find((x) => String(x.variant) === b.dataset.var);
+        if (!pick) return;
+        $('c-variant').value = String(pick.variant);
+        applyLetter(pick);
+        toast(`Layout ${pick.variant} applied`);
+      }));
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  $('c-dl-html').addEventListener('click', () => {
+    const html = $('c-html').value;
+    if (!html.trim()) return toast('Generate a letter first', 'err');
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${($('c-name').value || selectedKind || 'letter').replace(/\s+/g, '-')}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   });
 
   async function parsePaste() {
@@ -1364,16 +1412,41 @@ views.suppressions = async () => {
 };
 
 views.templates = async () => {
+  const cat = await api('/api/letters');
   view(`<div class="page-head"><h1>Templates</h1></div>
-    <p class="sub">Reusable content. Merge fields: <code>{{name}}</code> <code>{{first_name}}</code> <code>{{email}}</code> <code>{{company}}</code> <code>{{phone}}</code>. Fallback: <code>{{first_name|there}}</code>.</p>
-    <form id="tpl-form" class="form-grid">
+    <p class="sub">Starter HTML from your company: invoice, e-sign, meeting invite, shared files. Merge fields stay as <code>{{name}}</code> / <code>{{company}}</code>. These are not Adobe, DocuSign, Zoom, or SharePoint clones.</p>
+    <h2>Starter letters</h2>
+    <div id="tpl-starters" class="letter-grid"></div>
+    <form id="tpl-form" class="form-grid" style="margin-top:18px">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Subject</label><input name="subject"></div>
       <div class="field full"><label>HTML</label><textarea name="html" rows="5"></textarea></div>
       <div class="field full"><label>Plain text</label><textarea name="text" rows="3"></textarea></div>
       <div class="actions full"><button type="submit">Save template</button></div>
     </form>
+    <h2>Saved</h2>
     <table id="tpl-table"></table>`);
+  $('tpl-starters').innerHTML = cat.letters.map((l) =>
+    `<article class="letter-card" style="cursor:default">
+      <b>${esc(l.title)}</b><span>${esc(l.blurb)}</span>
+      <button type="button" class="tiny secondary" data-save="${l.id}" style="margin-top:10px">Save HTML copy</button>
+    </article>`
+  ).join('');
+  $('tpl-starters').querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      const letter = await api('/api/letters/generate', {
+        method: 'POST',
+        body: { kind: b.dataset.save, fields: {}, variant: 2 },
+      });
+      const meta = cat.letters.find((x) => x.id === b.dataset.save);
+      await api('/api/templates', {
+        method: 'POST',
+        body: { name: meta?.title || letter.kind, subject: letter.subject, html: letter.html, text: letter.text },
+      });
+      toast('Saved to your templates');
+      views.templates();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
   $('tpl-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     await api('/api/templates', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
@@ -1382,10 +1455,23 @@ views.templates = async () => {
   const rows = await api('/api/templates');
   $('tpl-table').innerHTML = `<tr><th>Name</th><th>Subject</th><th></th></tr>` +
     (rows.map((t) => `<tr><td>${esc(t.name)}</td><td>${esc(t.subject || '')}</td>
-      <td><button class="tiny danger" data-d="${t.id}">Delete</button></td></tr>`).join('')
-      || `<tr><td colspan="3" class="muted">No templates yet. Generate one from Compose.</td></tr>`);
+      <td>
+        <button class="tiny secondary" data-use="${t.id}">Use in compose</button>
+        <button class="tiny danger" data-d="${t.id}">Delete</button>
+      </td></tr>`).join('')
+      || `<tr><td colspan="3" class="muted">No saved templates yet. Use a starter above or generate one from Compose.</td></tr>`);
   $('tpl-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
     await api(`/api/templates/${b.dataset.d}`, { method: 'DELETE' }); views.templates();
+  }));
+  $('tpl-table').querySelectorAll('[data-use]').forEach((b) => b.addEventListener('click', async () => {
+    const t = rows.find((x) => String(x.id) === b.dataset.use);
+    if (!t) return;
+    await go('compose');
+    if ($('c-name')) $('c-name').value = t.name;
+    if ($('c-subject')) $('c-subject').value = t.subject || '';
+    if ($('c-html')) $('c-html').value = t.html || '';
+    if ($('c-text')) $('c-text').value = t.text || '';
+    toast('Loaded into Compose');
   }));
 };
 
