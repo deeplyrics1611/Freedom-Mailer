@@ -3,8 +3,6 @@ import { WebSocketServer } from 'ws';
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { db } from './db.js';
-import { licenseStatus } from './license.js';
-import { hasFeature } from './features.js';
 
 export const MAX_TARGETS = 20;
 export const DEFAULT_PORT = 5900;
@@ -75,8 +73,7 @@ export function userFromToken(token) {
     const payload = jwt.verify(token, config.jwtSecret);
     const user = db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').get(payload.id);
     if (!user) return null;
-    if (user.role !== 'admin' && !licenseStatus(user).ok) return null;
-    if (!hasFeature(user, 'vnc')) return null;
+    if (user.role !== 'admin') return null;
     return user;
   } catch {
     return null;

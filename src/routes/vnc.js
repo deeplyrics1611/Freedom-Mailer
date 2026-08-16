@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { db } from '../db.js';
-import { requireAuth, requireFeature } from '../auth.js';
+import { requireAuth, requireAdmin } from '../auth.js';
 import { MAX_TARGETS, parseTarget, publicTarget, wsPath } from '../vnc.js';
 
 const router = Router();
-router.use(requireAuth, requireFeature('vnc'));
+router.use(requireAuth, requireAdmin);
 
 function targetFor(req, id) {
   return db

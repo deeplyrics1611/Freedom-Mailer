@@ -340,10 +340,21 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(18px);
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  min-height: 0;
 }
 .sidebar .brand { font-size: 15px; margin-bottom: 4px; padding: 0 10px; }
 .sidebar .brand-tag { padding: 0 10px 16px; }
-#nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+#nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 #nav a {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px; border-radius: 8px;

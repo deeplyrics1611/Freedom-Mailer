@@ -138,7 +138,6 @@ const NAV = [
   ['links', '🔗 Links'],
   ['deliverability', '📬 Deliverability'],
   ['warmup', '🔥 Warmup'],
-  ['vnc', '🖥️ VNC'],
   ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
@@ -152,6 +151,7 @@ const NAV = [
 const ADMIN_NAV = [
   ['admin', '🎛️ Admin'],
   ['users', '👥 Clients'],
+  ['vnc', '🖥 VNC'],
 ];
 const ROUTE_FEATURE = {
   compose: 'compose',
@@ -159,7 +159,6 @@ const ROUTE_FEATURE = {
   links: 'links',
   deliverability: 'deliverability',
   warmup: 'warmup',
-  vnc: 'vnc',
   senders: 'senders',
   lists: 'campaigns',
   contacts: 'campaigns',
@@ -790,7 +789,7 @@ jordan@yourbrand.com"></textarea>
 views.vnc = async () => {
   const data = await api('/api/vnc');
   view(`<div class="page-head"><h1>VNC viewer</h1></div>
-    <p class="sub">Open a desktop you operate — TightVNC, TigerVNC, RealVNC, or any RFB server — inside this panel. The mailer proxies your session; it does not scan for listeners or guess passwords.</p>
+    <p class="sub">Admin only. Open a desktop you operate — TightVNC, TigerVNC, RealVNC, or any RFB server — inside this panel. The mailer proxies your session; it does not scan for listeners or guess passwords.</p>
     <div class="notice">
       Save only machines you own or are allowed to control. Classic VNC is not encrypted on the last hop.
       Prefer an SSH tunnel to <code>127.0.0.1</code> (or a VPN) and point the host at that tunnel. Default port is <code>5900</code>.
@@ -2258,7 +2257,10 @@ views.admin = async () => {
         <h1>Admin dashboard</h1>
         <p class="sub">Control every client: licenses, tools they can see, tracking host, sending kill-switch, and live traffic.</p>
       </div>
-      <button class="secondary" id="admin-refresh">Refresh</button>
+      <div class="actions" style="margin:0">
+        <button class="secondary" id="admin-vnc" type="button">Open VNC</button>
+        <button class="secondary" id="admin-refresh">Refresh</button>
+      </div>
     </div>
     <div class="cards admin-kpis">
       <div class="card"><div class="stat">${s.clients}</div><div class="stat-label">Clients</div></div>
@@ -2315,6 +2317,7 @@ views.admin = async () => {
     <table id="admin-events"></table>`);
 
   $('admin-refresh').addEventListener('click', () => views.admin());
+  $('admin-vnc').addEventListener('click', () => go('vnc'));
   $('admin-create').addEventListener('submit', async (e) => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
