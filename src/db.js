@@ -273,4 +273,18 @@ addColumn('warmup_plans', 'auto_reply', 'INTEGER NOT NULL DEFAULT 1');
 addColumn('campaigns', 'attachments', "TEXT NOT NULL DEFAULT '[]'");
 addColumn('messages', 'attachments', "TEXT NOT NULL DEFAULT '[]'");
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS vnc_targets (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label       TEXT NOT NULL,
+  host        TEXT NOT NULL,
+  port        INTEGER NOT NULL DEFAULT 5900,
+  password    TEXT NOT NULL DEFAULT '',
+  view_only   INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vnc_user ON vnc_targets(user_id);
+`);
+
 export default db;

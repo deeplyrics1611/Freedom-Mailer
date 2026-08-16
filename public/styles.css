@@ -669,6 +669,32 @@ pre {
 .wu-seeds { list-style: none; padding: 0; margin: 0; }
 .wu-seeds li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; }
 
+.vnc-stage {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  margin: 18px 0 24px;
+  backdrop-filter: blur(12px);
+}
+.vnc-stage header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.vnc-clip { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.vnc-clip input { width: 100%; }
+.vnc-screen {
+  min-height: 420px;
+  background: #0b0b0b;
+  position: relative;
+}
+.vnc-screen > div { background: #111 !important; }
+
 @media (max-width: 1100px) {
   .compose { grid-template-columns: 1fr; }
   .preview-wrap { position: static; }

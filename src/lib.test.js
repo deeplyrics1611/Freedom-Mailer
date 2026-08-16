@@ -467,6 +467,7 @@ describe('features', () => {
     assert.equal(all.compose, true);
     assert.equal(all.office365, true);
     assert.equal(all.warmup, true);
+    assert.equal(all.vnc, true);
     const off = parseFeatures('{"compose":false,"ai":false}');
     assert.equal(off.compose, false);
     assert.equal(off.ai, false);
@@ -481,6 +482,7 @@ describe('features', () => {
     assert.equal(mailer.compose, true);
     assert.equal(mailer.senders, true);
     assert.equal(mailer.warmup, true);
+    assert.equal(mailer.vnc, true);
     assert.equal(mailer.campaigns, false);
     assert.equal(mailer.apikeys, false);
     const lock = applyPreset('lockdown');
@@ -572,6 +574,29 @@ describe('warmup', () => {
     assert.ok(rendered.text.includes('Alex') || rendered.subject.includes('Alex') || rendered.text.length > 10);
     assert.equal(/https?:\/\//i.test(rendered.text), false);
     assert.equal(/unsubscribe|docusign|microsoft|adobe/i.test(rendered.text), false);
+  });
+});
+
+describe('vnc', () => {
+  it('parses host, host:port, and rejects junk', async () => {
+    const { parseTarget, publicTarget, wsPath, DEFAULT_PORT } = await import('./vnc.js');
+    const a = parseTarget({ host: 'desk.northwind.example', owned_ok: true });
+    assert.equal(a.host, 'desk.northwind.example');
+    assert.equal(a.port, DEFAULT_PORT);
+    assert.equal(a.view_only, false);
+    const b = parseTarget({ host: '10.0.0.8:5901', label: 'Shop PC', view_only: true });
+    assert.equal(b.host, '10.0.0.8');
+    assert.equal(b.port, 5901);
+    assert.equal(b.label, 'Shop PC');
+    assert.equal(b.view_only, true);
+    assert.match(parseTarget({ host: '' }).error, /host/i);
+    assert.match(parseTarget({ host: 'user@10.0.0.8' }).error, /username/i);
+    assert.match(parseTarget({ host: 'desk.example', port: 0 }).error, /port/i);
+    assert.match(parseTarget({ host: '999.1.1.1' }).error, /IPv4/i);
+    const pub = publicTarget({ id: 3, label: 'A', host: '127.0.0.1', port: 5900, password: 'secret', view_only: 0 });
+    assert.equal(pub.has_password, true);
+    assert.equal(pub.password, undefined);
+    assert.equal(wsPath(3), '/api/vnc/ws/3');
   });
 });
 

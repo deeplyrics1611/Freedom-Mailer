@@ -138,6 +138,7 @@ const NAV = [
   ['links', '🔗 Links'],
   ['deliverability', '📬 Deliverability'],
   ['warmup', '🔥 Warmup'],
+  ['vnc', '🖥️ VNC'],
   ['senders', '📮 Senders'],
   ['lists', '📋 Lists'],
   ['contacts', '👥 Contacts'],
@@ -158,6 +159,7 @@ const ROUTE_FEATURE = {
   links: 'links',
   deliverability: 'deliverability',
   warmup: 'warmup',
+  vnc: 'vnc',
   senders: 'senders',
   lists: 'campaigns',
   contacts: 'campaigns',
@@ -191,7 +193,18 @@ function renderNav() {
   }
 }
 
-function go(route) { state.route = route; renderNav(); return views[route](); }
+let vncRfb = null;
+function disconnectVnc() {
+  if (!vncRfb) return;
+  try { vncRfb.disconnect(); } catch { /* already closed */ }
+  vncRfb = null;
+}
+function go(route) {
+  disconnectVnc();
+  state.route = route;
+  renderNav();
+  return views[route]();
+}
 
 async function boot() {
   state.user = await api('/api/auth/me');
@@ -248,6 +261,7 @@ views.dashboard = async () => {
     card(s.office_tenants || 0, 'Office 365 tenants'),
     card(s.short_links || 0, 'Tracking links'),
     card(s.warmup_active || 0, 'Warmup live'),
+    card(s.vnc_targets || 0, 'VNC desktops'),
     card(s.sms_enabled ? 'On' : 'Off', 'Twilio SMS'),
     card(s.ai_enabled ? 'On' : 'Local', 'AI help'),
   ].join('');
@@ -771,6 +785,158 @@ jordan@yourbrand.com"></textarea>
       views.warmup();
     } catch (err) { toast(err.message, 'err'); }
   }));
+};
+
+views.vnc = async () => {
+  const data = await api('/api/vnc');
+  view(`<div class="page-head"><h1>VNC viewer</h1></div>
+    <p class="sub">Open a desktop you operate — TightVNC, TigerVNC, RealVNC, or any RFB server — inside this panel. The mailer proxies your session; it does not scan for listeners or guess passwords.</p>
+    <div class="notice">
+      Save only machines you own or are allowed to control. Classic VNC is not encrypted on the last hop.
+      Prefer an SSH tunnel to <code>127.0.0.1</code> (or a VPN) and point the host at that tunnel. Default port is <code>5900</code>.
+    </div>
+
+    <section class="card admin-panel" style="margin:16px 0">
+      <h2>Save a desktop</h2>
+      <form id="vnc-form" class="form-grid">
+        <div class="field"><label>Label</label><input name="label" placeholder="Office workstation"></div>
+        <div class="field"><label>Host</label><input name="host" required placeholder="127.0.0.1 or desk.yourbrand.com"></div>
+        <div class="field"><label>Port</label><input name="port" type="number" min="1" max="65535" value="5900"></div>
+        <div class="field"><label>VNC password</label><input name="password" type="password" autocomplete="new-password" placeholder="optional"></div>
+        <div class="check full"><input type="checkbox" name="view_only" id="vnc-view">
+          <span>View only (no keyboard or mouse)</span></div>
+        <div class="check full"><input type="checkbox" name="owned_ok" id="vnc-ok" required>
+          <span>This desktop is mine, or I am allowed to operate it.</span></div>
+        <div class="actions full"><button type="submit">Save desktop</button></div>
+      </form>
+    </section>
+
+    <div id="vnc-list"></div>
+
+    <section class="vnc-stage">
+      <header>
+        <div>
+          <b id="vnc-title">Viewer</b>
+          <div class="muted small" id="vnc-status">Pick a saved desktop and click Connect.</div>
+        </div>
+        <div class="actions" style="margin:0">
+          <button type="button" class="secondary tiny" id="vnc-cad" disabled>Ctrl+Alt+Del</button>
+          <button type="button" class="secondary tiny" id="vnc-scale" disabled>Fit / 1:1</button>
+          <button type="button" class="tiny danger" id="vnc-disc" disabled>Disconnect</button>
+        </div>
+      </header>
+      <div class="vnc-clip">
+        <input id="vnc-clip" placeholder="Paste text to the remote clipboard, then Enter">
+      </div>
+      <div id="vnc-screen" class="vnc-screen"></div>
+    </section>`);
+
+  function paintList() {
+    $('vnc-list').innerHTML = (data.targets || []).map((t) => `
+      <article class="client-card">
+        <header>
+          <div>
+            <b>${esc(t.label)}</b>
+            ${t.view_only ? badge('pending') + ' view only' : badge('ok') + ' interactive'}
+            ${t.has_password ? '<span class="muted small">password saved</span>' : '<span class="muted small">no password</span>'}
+            <div class="muted small"><code>${esc(t.host)}</code>:${t.port}</div>
+          </div>
+        </header>
+        <div class="row client-actions" style="margin-top:10px">
+          <button type="button" class="tiny" data-vnc="${t.id}">Connect</button>
+          <button type="button" class="tiny danger" data-vncd="${t.id}">Delete</button>
+        </div>
+      </article>`).join('') || '<p class="muted">No desktops saved yet.</p>';
+
+    $('vnc-list').querySelectorAll('[data-vnc]').forEach((b) => {
+      b.addEventListener('click', () => connectVnc(parseInt(b.dataset.vnc, 10)));
+    });
+    $('vnc-list').querySelectorAll('[data-vncd]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        if (!confirm('Remove this saved desktop?')) return;
+        await api(`/api/vnc/${b.dataset.vncd}`, { method: 'DELETE' });
+        disconnectVnc();
+        views.vnc();
+      });
+    });
+  }
+
+  function setLive(on) {
+    $('vnc-cad').disabled = !on;
+    $('vnc-scale').disabled = !on;
+    $('vnc-disc').disabled = !on;
+  }
+
+  async function connectVnc(id) {
+    disconnectVnc();
+    $('vnc-screen').innerHTML = '';
+    $('vnc-status').textContent = 'Opening session…';
+    setLive(false);
+    try {
+      const session = await api(`/api/vnc/${id}/session`);
+      $('vnc-title').textContent = session.label;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${proto}//${location.host}${session.ws_path}?token=${encodeURIComponent(state.token)}`;
+      const { default: RFB } = await import('/vendor/novnc/core/rfb.js');
+      vncRfb = new RFB($('vnc-screen'), url, {
+        credentials: { password: session.password || '' },
+        shared: true,
+      });
+      vncRfb.viewOnly = !!session.view_only;
+      vncRfb.scaleViewport = true;
+      vncRfb.clipViewport = true;
+      vncRfb.addEventListener('connect', () => {
+        $('vnc-status').textContent = `Connected · ${session.host}:${session.port}${session.view_only ? ' · view only' : ''}`;
+        setLive(true);
+      });
+      vncRfb.addEventListener('disconnect', (ev) => {
+        const clean = ev?.detail?.clean;
+        $('vnc-status').textContent = clean ? 'Disconnected.' : 'Disconnected (the VNC host closed the socket).';
+        setLive(false);
+        vncRfb = null;
+      });
+      vncRfb.addEventListener('credentialsrequired', () => {
+        const pw = prompt('VNC password for this desktop');
+        if (pw != null && vncRfb) vncRfb.sendCredentials({ password: pw });
+      });
+      vncRfb.addEventListener('securityfailure', (ev) => {
+        $('vnc-status').textContent = ev?.detail?.reason || 'VNC authentication failed.';
+      });
+    } catch (err) {
+      $('vnc-status').textContent = err.message;
+      toast(err.message, 'err');
+    }
+  }
+
+  $('vnc-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    b.owned_ok = $('vnc-ok').checked;
+    b.view_only = $('vnc-view').checked;
+    b.port = b.port ? parseInt(b.port, 10) : 5900;
+    try {
+      await api('/api/vnc', { method: 'POST', body: b });
+      toast('Desktop saved');
+      views.vnc();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  $('vnc-disc').addEventListener('click', () => {
+    disconnectVnc();
+    $('vnc-status').textContent = 'Disconnected.';
+    setLive(false);
+  });
+  $('vnc-cad').addEventListener('click', () => { if (vncRfb) vncRfb.sendCtrlAltDel(); });
+  $('vnc-scale').addEventListener('click', () => {
+    if (!vncRfb) return;
+    vncRfb.scaleViewport = !vncRfb.scaleViewport;
+    toast(vncRfb.scaleViewport ? 'Scaled to fit' : '1:1 pixels');
+  });
+  $('vnc-clip').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !vncRfb) return;
+    vncRfb.clipboardPasteFrom($('vnc-clip').value);
+    toast('Sent to remote clipboard');
+  });
+  paintList();
 };
 
 function senderOption(s) {

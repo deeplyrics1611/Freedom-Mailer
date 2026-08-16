@@ -26,6 +26,8 @@ import deliverabilityRoutes from './routes/deliverability.js';
 import adminRoutes from './routes/admin.js';
 import warmupRoutes from './routes/warmup.js';
 import spamcheckRoutes from './routes/spamcheck.js';
+import vncRoutes from './routes/vnc.js';
+import { attachVncProxy } from './vnc.js';
 import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +111,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
     short_links: one('SELECT COUNT(*) n FROM short_links WHERE user_id = ?'),
     warmup_plans: one('SELECT COUNT(*) n FROM warmup_plans WHERE user_id = ?'),
     warmup_active: one("SELECT COUNT(*) n FROM warmup_plans WHERE user_id = ? AND status = 'active'"),
+    vnc_targets: one('SELECT COUNT(*) n FROM vnc_targets WHERE user_id = ?'),
     sms_enabled: smsEnabled(),
     ai_enabled: aiEnabled(),
   });
@@ -143,6 +146,8 @@ app.use('/api/links', linkRoutes);
 app.use('/api/deliverability', deliverabilityRoutes);
 app.use('/api/warmup', warmupRoutes);
 app.use('/api/spamcheck', spamcheckRoutes);
+app.use('/api/vnc', vncRoutes);
+app.use('/vendor/novnc', express.static(path.join(__dirname, '..', 'node_modules', '@novnc', 'novnc')));
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);
@@ -164,7 +169,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(config.port, config.host, () => {
+const server = app.listen(config.port, config.host, () => {
   console.log(`Freedom Mailer running at ${config.appBaseUrl} (${config.host}:${config.port})`);
   startWorker();
 });
+attachVncProxy(server);
