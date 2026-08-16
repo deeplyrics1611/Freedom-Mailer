@@ -11,6 +11,7 @@ import {
   sendViaSes,
   verifySes,
 } from './providers.js';
+import { parseStored, toNodemailerAttachments } from './attachments.js';
 
 export function transportForSender(sender) {
   if (sender) {
@@ -76,7 +77,8 @@ export async function verifyTransport(sender) {
   return true;
 }
 
-export async function sendEmail({ sender, to, subject, html, text, headers }) {
+export async function sendEmail({ sender, to, subject, html, text, headers, attachments }) {
+  const files = Array.isArray(attachments) ? attachments : parseStored(attachments);
   if (sender?.kind === 'office365') {
     const tenant = officeTenant(sender);
     const mode = sender.auth_mode || tenant?.send_mode;
@@ -88,13 +90,14 @@ export async function sendEmail({ sender, to, subject, html, text, headers }) {
         html,
         text,
         headers,
+        attachments: files,
       });
     }
   }
   if (usesHttpApi(sender)) {
     const from = fromAddress(sender);
     if (sender.kind === 'mailgun') {
-      return sendViaMailgun(sender, { from, to, subject, html, text, headers });
+      return sendViaMailgun(sender, { from, to, subject, html, text, headers, attachments: files });
     }
     if (sender.kind === 'sendgrid') {
       return sendViaSendGrid(sender, {
@@ -105,10 +108,11 @@ export async function sendEmail({ sender, to, subject, html, text, headers }) {
         html,
         text,
         headers,
+        attachments: files,
       });
     }
     if (sender.kind === 'aws') {
-      return sendViaSes(sender, { from, to, subject, html, text, headers });
+      return sendViaSes(sender, { from, to, subject, html, text, headers, attachments: files });
     }
   }
   const transport = transportForSender(sender);
@@ -119,6 +123,7 @@ export async function sendEmail({ sender, to, subject, html, text, headers }) {
     html: html || undefined,
     text: text || undefined,
     headers: headers || undefined,
+    attachments: files.length ? toNodemailerAttachments(files) : undefined,
   });
   return info.messageId;
 }

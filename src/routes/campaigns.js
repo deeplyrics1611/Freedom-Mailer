@@ -6,6 +6,8 @@ import { isSuppressed, withUnsubscribeFooter, renderTemplate, newToken } from '.
 import { parseLeads, toSmsAddress } from '../leads.js';
 import { expandVars } from '../placeholders.js';
 import { verifyTransport } from '../mailer.js';
+import { normalizeAttachments, parseStored } from '../attachments.js';
+import { analyzeContent, sendBlockError } from '../spamcheck.js';
 
 const router = Router();
 router.use(requireAuth, requireFeature('campaigns'));
@@ -99,15 +101,51 @@ router.get('/', (req, res) => {
   res.json(rows);
 });
 
+function packAttachments(body, html) {
+  const packed = normalizeAttachments(body?.attachments, {
+    attachHtml: !!body?.attach_html,
+    html,
+    htmlName: body?.attach_html_name || body?.name || 'letter.html',
+  });
+  if (packed.error) {
+    const err = new Error(packed.error);
+    err.status = 400;
+    throw err;
+  }
+  return packed;
+}
+
+function guardCopy({ subject, html, text, attachments }) {
+  const report = analyzeContent({
+    subject,
+    html,
+    text,
+    attachments: parseStored(attachments),
+  });
+  const block = sendBlockError(report);
+  if (block) {
+    const err = new Error(block);
+    err.status = 400;
+    err.spam = report;
+    throw err;
+  }
+  return report;
+}
+
 router.post('/', (req, res) => {
   const { name, sender_id, list_id, subject = '', html = '', text = '', channel = 'email' } = req.body || {};
   if (!name) return res.status(400).json({ error: 'Name required' });
-  const info = db
-    .prepare(
-      'INSERT INTO campaigns (user_id, name, sender_id, list_id, subject, html, text, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    )
-    .run(req.user.id, name, sender_id || null, list_id || null, subject, html, text, channel);
-  res.status(201).json({ id: info.lastInsertRowid });
+  try {
+    const packed = packAttachments(req.body, html);
+    const info = db
+      .prepare(
+        'INSERT INTO campaigns (user_id, name, sender_id, list_id, subject, html, text, channel, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(req.user.id, name, sender_id || null, list_id || null, subject, html, text, channel, packed.json);
+    res.status(201).json({ id: info.lastInsertRowid });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: String(e.message || e) });
+  }
 });
 
 router.put('/:id', (req, res) => {
@@ -124,10 +162,17 @@ router.put('/:id', (req, res) => {
     text = c.text,
     channel = c.channel,
   } = req.body || {};
-  db.prepare(
-    'UPDATE campaigns SET name=?, sender_id=?, list_id=?, subject=?, html=?, text=?, channel=? WHERE id=?'
-  ).run(name, sender_id || null, list_id || null, subject, html, text, channel, id);
-  res.json({ ok: true });
+  try {
+    const packed = req.body?.attachments || req.body?.attach_html
+      ? packAttachments(req.body, html)
+      : { json: c.attachments || '[]' };
+    db.prepare(
+      'UPDATE campaigns SET name=?, sender_id=?, list_id=?, subject=?, html=?, text=?, channel=?, attachments=? WHERE id=?'
+    ).run(name, sender_id || null, list_id || null, subject, html, text, channel, packed.json, id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: String(e.message || e) });
+  }
 });
 
 router.delete('/:id', (req, res) => {
@@ -173,9 +218,10 @@ async function resolveSender(userId, senderId) {
 function enqueueCampaign(user, campaign, recipients, sender) {
   let queued = 0;
   let skipped = 0;
+  const attachJson = campaign.attachments && campaign.attachments !== '[]' ? campaign.attachments : '[]';
   const insert = db.prepare(
-    `INSERT INTO messages (user_id, channel, campaign_id, sender_id, to_address, subject, html, text, status, unsub_token, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 'campaign')`
+    `INSERT INTO messages (user_id, channel, campaign_id, sender_id, to_address, subject, html, text, status, unsub_token, source, attachments)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 'campaign', ?)`
   );
 
   const tx = db.transaction((rows) => {
@@ -204,7 +250,8 @@ function enqueueCampaign(user, campaign, recipients, sender) {
             subject || '',
             '',
             baseText || subject || '',
-            token
+            token,
+            '[]'
           );
           queued++;
         } catch {
@@ -223,7 +270,8 @@ function enqueueCampaign(user, campaign, recipients, sender) {
         subject,
         withFooter.html,
         withFooter.text,
-        token
+        token,
+        attachJson
       );
       queued++;
     }
@@ -242,6 +290,9 @@ router.post('/:id/send', async (req, res) => {
   if (!c.subject && c.channel !== 'smtp_sms') return res.status(400).json({ error: 'Campaign needs a subject' });
 
   try {
+    if (c.channel !== 'smtp_sms') {
+      guardCopy({ subject: c.subject, html: c.html, text: c.text, attachments: c.attachments });
+    }
     const sender = await resolveSender(req.user.id, c.sender_id);
     const statusFilter = config.requireDoubleOptIn ? "'confirmed'" : "'confirmed','pending'";
     const recipients = db
@@ -254,7 +305,7 @@ router.post('/:id/send', async (req, res) => {
     const result = enqueueCampaign(req.user, c, recipients, sender);
     res.json({ ok: true, ...result });
   } catch (e) {
-    res.status(e.status || 500).json({ error: String(e.message || e) });
+    res.status(e.status || 500).json({ error: String(e.message || e), spam: e.spam });
   }
 });
 
@@ -271,6 +322,8 @@ router.post('/compose', async (req, res) => {
     save_list = true,
     list_id = null,
     channel = 'email',
+    attach_html = false,
+    attach_html_name = '',
   } = req.body || {};
 
   if (!consent) {
@@ -293,6 +346,15 @@ router.post('/compose', async (req, res) => {
   try {
     const sender = await resolveSender(req.user.id, sender_id);
     const smsMode = sender?.kind === 'smtp_sms' || channel === 'smtp_sms';
+    const packed = smsMode
+      ? { json: '[]', attachments: [] }
+      : packAttachments(
+          { attachments: req.body?.attachments, attach_html, attach_html_name, name },
+          html
+        );
+    if (!smsMode) {
+      guardCopy({ subject, html, text, attachments: packed.attachments });
+    }
     if (smsMode && parsed.leads.some((l) => !l.phone)) {
       return res.status(400).json({
         error: 'SMTP-to-SMS needs a phone number on every lead (email, name, phone).',
@@ -312,7 +374,7 @@ router.post('/compose', async (req, res) => {
 
     const campInfo = db
       .prepare(
-        'INSERT INTO campaigns (user_id, name, sender_id, list_id, subject, html, text, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO campaigns (user_id, name, sender_id, list_id, subject, html, text, channel, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         req.user.id,
@@ -322,7 +384,8 @@ router.post('/compose', async (req, res) => {
         subject,
         html,
         text,
-        smsMode ? 'smtp_sms' : channel
+        smsMode ? 'smtp_sms' : channel,
+        packed.json
       );
     const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(campInfo.lastInsertRowid);
 
@@ -347,10 +410,11 @@ router.post('/compose', async (req, res) => {
       list_id: listId,
       parsed: parsed.total,
       invalid: parsed.invalid.slice(0, 20),
+      attachments: packed.attachments.length,
       ...result,
     });
   } catch (e) {
-    res.status(e.status || 500).json({ error: String(e.message || e) });
+    res.status(e.status || 500).json({ error: String(e.message || e), spam: e.spam });
   }
 });
 

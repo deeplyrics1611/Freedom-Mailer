@@ -217,6 +217,7 @@ const badge = (status) => {
     '3day': 'warn', monthly: 'ok', lifetime: 'ok', expired: 'err',
     active: 'ok', paused: 'warn', warmup: 'ok',
     undeliverable: 'err', unknown: 'warn', drop: 'err', invalid: 'err',
+    block: 'err', risky: 'warn', ok: 'ok',
   };
   return `<span class="badge ${map[status] || 'muted'}">${esc(status)}</span>`;
 };
@@ -392,7 +393,18 @@ not-an-email"></textarea>
     <h2>By provider / ISP</h2>
     <div id="deb-groups"></div>
     <h2>Each address</h2>
-    <table id="deb-table"></table>`);
+    <table id="deb-table"></table>
+
+    <h2>HTML / subject spam words</h2>
+    <p class="muted small">Paste a subject and HTML letter. The checker flags junk-mail phrases and blocks credential-harvest copy. Strip risky words for clearer wording — it does not hide mail from filters.</p>
+    <div class="field full"><label>Subject</label><input id="spam-subject" placeholder="Invoice for {{company}}"></div>
+    <div class="field full"><label>HTML</label><textarea id="spam-html" rows="8" placeholder="<p>Hi {{first_name|there}}…</p>"></textarea></div>
+    <div class="field full"><label>Plain text (optional)</label><textarea id="spam-text" rows="3"></textarea></div>
+    <div class="actions" style="margin:10px 0">
+      <button type="button" id="spam-run">Check HTML</button>
+      <button type="button" class="secondary" id="spam-scrub">Strip risky phrases</button>
+    </div>
+    <div id="spam-out" class="spam-box"><div class="muted small">Paste a letter, then Check HTML.</div></div>`);
 
   let last = null;
   let timer = null;
@@ -569,6 +581,39 @@ not-an-email"></textarea>
   $('deb-copy-drop').addEventListener('click', () => {
     if (!last) return toast('Run a check first', 'err');
     copyText(last.results.filter((r) => !r.keep).map((r) => r.email).join('\n'));
+  });
+
+  function paintHtmlSpam(report) {
+    const hits = report.hits || [];
+    $('spam-out').innerHTML = `<div class="spam-head">${badge(report.verdict)} ${esc(report.summary)}</div>` +
+      (hits.length
+        ? `<ul class="spam-hits">${hits.map((h) =>
+          `<li><span class="badge ${h.severity === 'block' ? 'err' : 'warn'}">${esc(h.severity)}</span> <code>${esc(h.phrase)}</code> <span class="muted small">${esc(h.where)} · ${esc(h.note)}</span></li>`
+        ).join('')}</ul>`
+        : '');
+  }
+  $('spam-run').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/spamcheck', {
+        method: 'POST',
+        body: { subject: $('spam-subject').value, html: $('spam-html').value, text: $('spam-text').value },
+      });
+      paintHtmlSpam(r);
+      toast(r.summary, r.verdict === 'ok' ? 'ok' : 'err');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  $('spam-scrub').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/spamcheck/scrub', {
+        method: 'POST',
+        body: { subject: $('spam-subject').value, html: $('spam-html').value, text: $('spam-text').value },
+      });
+      $('spam-subject').value = r.subject;
+      $('spam-html').value = r.html;
+      $('spam-text').value = r.text;
+      paintHtmlSpam(r.report);
+      toast(r.replaced?.length ? `Rewrote ${r.replaced.length} phrase(s)` : 'Nothing to strip');
+    } catch (err) { toast(err.message, 'err'); }
   });
 };
 
@@ -805,6 +850,27 @@ Jane Doe <jane@example.com>"></textarea>
           <div class="field full" style="margin-top:10px"><label>HTML</label><textarea id="c-html" rows="10" placeholder="<p>Hi {{first_name|there}}…</p>"></textarea></div>
           <div class="field full"><label>Plain text</label><textarea id="c-text" rows="4"></textarea></div>
 
+          <h2>Attachments</h2>
+          <p class="muted small">Attach this letter as an <code>.html</code> file, or add a small PDF / image / text file. Executables, scripts, and archives are refused.</p>
+          <label class="check" style="margin:8px 0">
+            <input type="checkbox" id="c-attach-html">
+            <span>Attach the current HTML as a file (letter.html)</span>
+          </label>
+          <div class="actions" style="margin:8px 0 4px">
+            <button type="button" class="secondary tiny" id="c-attach-pick">Add file</button>
+            <input type="file" id="c-attach-file" class="hidden" accept=".html,.htm,.txt,.csv,.pdf,.png,.jpg,.jpeg,.gif">
+            <span class="muted small">html, txt, csv, pdf, png, jpg, gif · 400 KB each · 3 files</span>
+          </div>
+          <div id="c-attach-list" class="attach-list"></div>
+
+          <h2>HTML spam check</h2>
+          <p class="muted small">Flags words and phrases that often land in junk, plus credential-harvest copy that we will not send. Strip risky phrases for clearer wording — this does not sneak past filters.</p>
+          <div id="c-spam" class="spam-box"><div class="muted small">Subject and HTML are checked as you type.</div></div>
+          <div class="actions" style="margin:8px 0 12px">
+            <button type="button" class="secondary tiny" id="c-spam-run">Check now</button>
+            <button type="button" class="secondary tiny" id="c-spam-scrub">Strip risky phrases</button>
+          </div>
+
           <div class="ai-box">
             <h2 style="margin-top:0">AI help</h2>
             <p class="muted small">${ai.enabled ? 'Model connected. Rewrite, translate, or draft from a prompt.' : 'No API key — local help can generate letters and plain text. Set OPENAI_API_KEY for full rewrites.'}</p>
@@ -995,6 +1061,136 @@ Jane Doe <jane@example.com>"></textarea>
   });
   ['c-subject', 'c-html'].forEach((id) => $(id).addEventListener('change', () => refreshPreview().catch(() => {})));
 
+  const composeFiles = [];
+  let spamTimer = null;
+  let lastSpam = null;
+
+  function paintAttachList() {
+    const rows = [];
+    if ($('c-attach-html').checked) {
+      const bytes = new Blob([$('c-html').value || '']).size;
+      rows.push(`<div class="attach-item"><span>letter.html <span class="muted small">HTML letter · ${Math.round(bytes / 1024)} KB</span></span><span class="muted small">on send</span></div>`);
+    }
+    composeFiles.forEach((a, i) => {
+      rows.push(`<div class="attach-item"><span>${esc(a.filename)} <span class="muted small">${esc(a.content_type)} · ${Math.round((a.size || 0) / 1024)} KB</span></span><button type="button" class="tiny secondary" data-rm="${i}">Remove</button></div>`);
+    });
+    $('c-attach-list').innerHTML = rows.join('') || '<div class="muted small">No extra files.</div>';
+    $('c-attach-list').querySelectorAll('[data-rm]').forEach((b) => {
+      b.addEventListener('click', () => {
+        composeFiles.splice(parseInt(b.dataset.rm, 10), 1);
+        paintAttachList();
+        runSpamCheck();
+      });
+    });
+  }
+
+  function fileToAttachment(file) {
+    return new Promise((resolve, reject) => {
+      if (file.size > 400 * 1024) return reject(new Error(`${file.name} is over 400 KB`));
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read file'));
+      reader.onload = () => {
+        const raw = String(reader.result || '');
+        const content = raw.includes(',') ? raw.split(',')[1] : raw;
+        resolve({
+          filename: file.name,
+          content_type: file.type || 'application/octet-stream',
+          content,
+          size: file.size,
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function attachmentHtmls() {
+    return composeFiles
+      .filter((a) => String(a.content_type || '').includes('html') || /\.html?$/i.test(a.filename || ''))
+      .map((a) => {
+        try {
+          return decodeURIComponent(escape(atob(a.content)));
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
+  }
+
+  function paintSpam(report) {
+    lastSpam = report;
+    const box = $('c-spam');
+    if (!report) {
+      box.innerHTML = '<div class="muted small">Subject and HTML are checked as you type.</div>';
+      return;
+    }
+    const hits = report.hits || [];
+    box.innerHTML = `<div class="spam-head">${badge(report.verdict)} ${esc(report.summary)}</div>` +
+      (hits.length
+        ? `<ul class="spam-hits">${hits.map((h) =>
+          `<li><span class="badge ${h.severity === 'block' ? 'err' : 'warn'}">${esc(h.severity)}</span> <code>${esc(h.phrase)}</code> <span class="muted small">${esc(h.where)} · ${esc(h.note)}</span></li>`
+        ).join('')}</ul>`
+        : '');
+  }
+
+  async function runSpamCheck() {
+    try {
+      const report = await api('/api/spamcheck', {
+        method: 'POST',
+        body: {
+          subject: $('c-subject').value,
+          html: $('c-html').value,
+          text: $('c-text').value,
+          attachment_html: attachmentHtmls(),
+        },
+      });
+      paintSpam(report);
+      return report;
+    } catch (err) {
+      $('c-spam').innerHTML = `<div class="error">${esc(err.message)}</div>`;
+      return null;
+    }
+  }
+
+  function scheduleSpam() {
+    clearTimeout(spamTimer);
+    spamTimer = setTimeout(() => runSpamCheck(), 700);
+  }
+
+  $('c-attach-html').addEventListener('change', () => { paintAttachList(); scheduleSpam(); });
+  $('c-attach-pick').addEventListener('click', () => $('c-attach-file').click());
+  $('c-attach-file').addEventListener('change', async () => {
+    const file = $('c-attach-file').files?.[0];
+    $('c-attach-file').value = '';
+    if (!file) return;
+    if (composeFiles.length >= 3) return toast('At most 3 extra files', 'err');
+    try {
+      composeFiles.push(await fileToAttachment(file));
+      paintAttachList();
+      toast(`Attached ${file.name}`);
+      runSpamCheck();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  paintAttachList();
+
+  $('c-spam-run').addEventListener('click', () => runSpamCheck().then((r) => {
+    if (r) toast(r.summary, r.verdict === 'ok' ? 'ok' : 'err');
+  }));
+  $('c-spam-scrub').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/spamcheck/scrub', {
+        method: 'POST',
+        body: { subject: $('c-subject').value, html: $('c-html').value, text: $('c-text').value },
+      });
+      $('c-subject').value = r.subject;
+      $('c-html').value = r.html;
+      $('c-text').value = r.text;
+      paintSpam(r.report);
+      refreshPreview();
+      toast(r.replaced?.length ? `Rewrote ${r.replaced.length} phrase(s)` : 'Nothing to strip');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  ['c-subject', 'c-html', 'c-text'].forEach((id) => $(id).addEventListener('input', scheduleSpam));
+
   $('ai-run').addEventListener('click', async () => {
     $('ai-notes').textContent = 'Working…';
     try {
@@ -1034,6 +1230,10 @@ Jane Doe <jane@example.com>"></textarea>
     e.preventDefault();
     try {
       await parsePaste();
+      const spam = await runSpamCheck();
+      if (spam && !spam.can_send) {
+        throw new Error(spam.summary || 'This copy is blocked by the spam checker.');
+      }
       const r = await api('/api/campaigns/compose', {
         method: 'POST',
         body: {
@@ -1046,6 +1246,9 @@ Jane Doe <jane@example.com>"></textarea>
           consent: $('c-consent').checked,
           list_id: $('c-list').value || null,
           save_list: true,
+          attach_html: $('c-attach-html').checked,
+          attach_html_name: ($('c-name').value || 'letter').replace(/\s+/g, '-'),
+          attachments: composeFiles,
         },
       });
       toast(`Queued ${r.queued} · skipped ${r.skipped}`);

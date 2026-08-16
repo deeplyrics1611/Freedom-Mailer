@@ -90,6 +90,7 @@ async function processMessage(msg) {
       html: msg.channel === 'smtp_sms' ? undefined : msg.html,
       text: msg.text,
       headers: msg.channel === 'smtp_sms' ? undefined : headers,
+      attachments: msg.channel === 'smtp_sms' ? undefined : msg.attachments,
     });
     db.prepare(
       "UPDATE messages SET status = 'sent', error = '', sent_at = datetime('now'), message_id = ? WHERE id = ?"

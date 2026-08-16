@@ -1,4 +1,5 @@
 // Microsoft 365 / Office 365 tenant sending: Graph sendMail (app) or SMTP AUTH.
+import { toGraphAttachments } from './attachments.js';
 
 export const OFFICE_SEND_MODES = [
   {
@@ -57,7 +58,7 @@ export function graphUrl(path) {
   return `https://graph.microsoft.com/v1.0/${p}`;
 }
 
-export function buildGraphMessage({ from, to, subject, html, text, headers }) {
+export function buildGraphMessage({ from, to, subject, html, text, headers, attachments }) {
   const message = {
     subject: subject || '',
     body: {
@@ -77,6 +78,7 @@ export function buildGraphMessage({ from, to, subject, html, text, headers }) {
     }
   }
   if (extra.length) message.internetMessageHeaders = extra;
+  if (attachments?.length) message.attachments = toGraphAttachments(attachments);
   return { message, saveToSentItems: true };
 }
 
@@ -129,11 +131,11 @@ export async function graphFetch(token, path, { method = 'GET', body } = {}) {
   return data;
 }
 
-export async function sendViaGraph(tenant, { from, to, subject, html, text, headers, token }) {
+export async function sendViaGraph(tenant, { from, to, subject, html, text, headers, attachments, token }) {
   const access = token || (await getAppToken(tenant)).access_token;
   const mailbox = from || tenant.default_mailbox;
   if (!mailbox) throw new Error('From mailbox UPN is required for Graph send');
-  const payload = buildGraphMessage({ from: mailbox, to, subject, html, text, headers });
+  const payload = buildGraphMessage({ from: mailbox, to, subject, html, text, headers, attachments });
   await graphFetch(access, `users/${encodeURIComponent(mailbox)}/sendMail`, {
     method: 'POST',
     body: payload,

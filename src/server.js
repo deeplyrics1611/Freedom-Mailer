@@ -25,6 +25,7 @@ import linkRoutes from './routes/links.js';
 import deliverabilityRoutes from './routes/deliverability.js';
 import adminRoutes from './routes/admin.js';
 import warmupRoutes from './routes/warmup.js';
+import spamcheckRoutes from './routes/spamcheck.js';
 import { aiEnabled } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,7 +38,7 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Bootstrap the first admin if the users table is empty, then make sure
@@ -141,6 +142,7 @@ app.use('/api/office365', office365Routes);
 app.use('/api/links', linkRoutes);
 app.use('/api/deliverability', deliverabilityRoutes);
 app.use('/api/warmup', warmupRoutes);
+app.use('/api/spamcheck', spamcheckRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

@@ -15,6 +15,7 @@ import { staticValidate, classifyClient, extractUrls, parseLinkBase, shortUrl, l
 import { inspectLocal, classifyMx, debounceEmails } from './deliverability.js';
 import {
   buildMailgunForm,
+  buildMailgunMultipart,
   buildSendGridPayload,
   buildSesPayload,
   signAwsV4,
@@ -22,6 +23,15 @@ import {
   mailgunApiBase,
   usesHttpApi,
 } from './providers.js';
+import { analyzeContent, scrubContent, sendBlockError } from './spamcheck.js';
+import {
+  normalizeAttachments,
+  sanitizeHtmlAttachment,
+  makeHtmlAttachment,
+  toSendGridAttachments,
+  toGraphAttachments,
+  toNodemailerAttachments,
+} from './attachments.js';
 import { computeExpiry, extendExpiry, licenseStatus } from './license.js';
 import {
   dailyTarget,
@@ -148,6 +158,15 @@ describe('office365', () => {
     assert.equal(payload.saveToSentItems, true);
     assert.equal(payload.message.toRecipients[0].emailAddress.address, 'b@ex.com');
     assert.equal(payload.message.internetMessageHeaders[0].name, 'List-Unsubscribe');
+    const withFile = buildGraphMessage({
+      from: 'a@contoso.com',
+      to: 'b@ex.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      attachments: [{ filename: 'letter.html', content_type: 'text/html', content: Buffer.from('<p>Hi</p>').toString('base64') }],
+    });
+    assert.equal(withFile.message.attachments[0]['@odata.type'], '#microsoft.graph.fileAttachment');
+    assert.equal(withFile.message.attachments[0].name, 'letter.html');
     assert.equal(OFFICE_SMTP.host, 'smtp.office365.com');
     assert.ok(GRAPH_PERMISSIONS.some((p) => p.id === 'Mail.Send' && p.required));
   });
@@ -373,6 +392,16 @@ describe('providers', () => {
     assert.equal(payload.personalizations[0].to[0].email, 'a@x.com');
     assert.equal(payload.content[1].type, 'text/html');
     assert.equal(payload.headers['List-Unsubscribe'], '<https://x/u/1>');
+    const withFile = buildSendGridPayload({
+      fromName: 'Northwind',
+      fromEmail: 'hello@northwind.example',
+      to: 'a@x.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      attachments: [{ filename: 'letter.html', content_type: 'text/html', content: 'PHA+SGk8L3A+' }],
+    });
+    assert.equal(withFile.attachments[0].filename, 'letter.html');
+    assert.equal(withFile.attachments[0].disposition, 'attachment');
   });
 
   it('builds SES v2 payload with headers', () => {
@@ -387,6 +416,23 @@ describe('providers', () => {
     assert.deepEqual(payload.ReplyToAddresses, ['support@northwind.example']);
     assert.equal(payload.Content.Simple.Headers[0].Name, 'List-Unsubscribe');
     assert.ok(!payload.EmailTags);
+    assert.throws(
+      () => buildSesPayload({ from: 'a@x.com', to: 'b@x.com', subject: 'Hi', attachments: [{ filename: 'a.html' }] }),
+      /attachments/i
+    );
+  });
+
+  it('builds Mailgun multipart when files are present', () => {
+    const form = buildMailgunMultipart({
+      from: 'Northwind <hello@mg.northwind.example>',
+      to: 'a@x.com',
+      subject: 'Hi',
+      html: '<p>Hi</p>',
+      attachments: [{ filename: 'letter.html', content_type: 'text/html', content: Buffer.from('<p>Hi</p>').toString('base64') }],
+    });
+    assert.equal(typeof form.get, 'function');
+    assert.equal(form.get('from'), 'Northwind <hello@mg.northwind.example>');
+    assert.ok(form.get('attachment'));
   });
 
   it('signs AWS SigV4 GET like the IAM ListUsers example', () => {
@@ -526,5 +572,88 @@ describe('warmup', () => {
     assert.ok(rendered.text.includes('Alex') || rendered.subject.includes('Alex') || rendered.text.length > 10);
     assert.equal(/https?:\/\//i.test(rendered.text), false);
     assert.equal(/unsubscribe|docusign|microsoft|adobe/i.test(rendered.text), false);
+  });
+});
+
+describe('spamcheck', () => {
+  it('allows a normal invoice letter', () => {
+    const report = analyzeContent({
+      subject: 'Invoice 1042 for Northwind',
+      html: '<p>Hi Alex, your invoice is ready. <a href="https://northwind.example/pay">Pay invoice</a></p>',
+      text: 'Hi Alex, your invoice is ready.',
+    });
+    assert.equal(report.verdict, 'ok');
+    assert.equal(report.can_send, true);
+    assert.equal(sendBlockError(report), null);
+  });
+
+  it('blocks credential-harvest and prize-claim copy', () => {
+    const cred = analyzeContent({
+      subject: 'Verify your Microsoft account',
+      html: '<p>Confirm your password to keep access.</p>',
+    });
+    assert.equal(cred.verdict, 'block');
+    assert.ok(sendBlockError(cred));
+
+    const prize = analyzeContent({
+      subject: 'You have been selected as winner',
+      html: '<p>Claim your prize today.</p>',
+    });
+    assert.equal(prize.verdict, 'block');
+  });
+
+  it('flags junk phrases and can scrub them', () => {
+    const report = analyzeContent({
+      subject: 'ACT NOW!!!',
+      html: '<p>Click here for a limited time offer. This is not spam.</p>',
+    });
+    assert.equal(report.verdict, 'risky');
+    assert.ok(report.hits.some((h) => h.id === 'click-here'));
+    const scrubbed = scrubContent({
+      subject: 'ACT NOW!!!',
+      html: '<p>Click here for a limited time offer. This is not spam.</p>',
+      text: 'Click here',
+    });
+    assert.equal(/click here/i.test(scrubbed.html), false);
+    assert.equal(/act now/i.test(scrubbed.subject), false);
+    assert.ok(scrubbed.replaced.length >= 1);
+    assert.equal(scrubbed.report.verdict === 'block', false);
+  });
+
+  it('flags scripts, public shorteners, and attached HTML', () => {
+    const report = analyzeContent({
+      subject: 'Files',
+      html: '<p>See <a href="https://bit.ly/abc">link</a></p><script>alert(1)</script>',
+      attachment_html: ['<p>Verify your Microsoft account now</p>'],
+    });
+    assert.equal(report.verdict, 'block');
+    assert.ok(report.hits.some((h) => h.id === 'public-shortener'));
+    assert.ok(report.hits.some((h) => h.id === 'html-script'));
+  });
+});
+
+describe('attachments', () => {
+  it('accepts a sanitized HTML file and rejects executables', () => {
+    const html = makeHtmlAttachment('letter.html', '<p>Hi</p><script>alert(1)</script>');
+    assert.equal(html.content_type, 'text/html');
+    assert.equal(/script/i.test(Buffer.from(html.content, 'base64').toString('utf8')), false);
+    assert.match(sanitizeHtmlAttachment('<img src=x onerror=alert(1)>'), /<img src=x>/i);
+
+    const bad = normalizeAttachments([{ filename: 'payload.exe', content: Buffer.from('MZ').toString('base64') }]);
+    assert.match(bad.error, /exe/i);
+
+    const ok = normalizeAttachments([], { attachHtml: true, html: '<p>Invoice</p>', htmlName: 'invoice' });
+    assert.equal(ok.attachments[0].filename, 'invoice.html');
+    assert.equal(toSendGridAttachments(ok.attachments)[0].disposition, 'attachment');
+    assert.equal(toGraphAttachments(ok.attachments)[0].name, 'invoice.html');
+    assert.ok(Buffer.isBuffer(toNodemailerAttachments(ok.attachments)[0].content));
+  });
+
+  it('rejects oversize and unknown types', () => {
+    const huge = Buffer.alloc(401 * 1024, 97).toString('base64');
+    const over = normalizeAttachments([{ filename: 'big.txt', content: huge }]);
+    assert.match(over.error, /400 KB/i);
+    const zip = normalizeAttachments([{ filename: 'pack.zip', content: Buffer.from('PK').toString('base64') }]);
+    assert.match(zip.error, /zip/i);
   });
 });

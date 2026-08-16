@@ -522,6 +522,29 @@ pre {
   margin: 12px 0;
 }
 
+.spam-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 8px 0;
+}
+.spam-head { margin-bottom: 8px; }
+.spam-hits { margin: 0; padding-left: 18px; }
+.spam-hits li { margin: 6px 0; }
+.attach-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+.attach-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
 .theme-switch { display: flex; gap: 6px; padding: 0 4px 8px; flex-wrap: wrap; }
 .theme-dot {
   width: 18px;

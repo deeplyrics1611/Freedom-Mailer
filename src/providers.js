@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'crypto';
+import { toSendGridAttachments } from './attachments.js';
 
 export const API_SENDER_KINDS = new Set(['mailgun', 'sendgrid', 'aws']);
 
@@ -34,7 +35,7 @@ export function buildMailgunForm({ from, to, subject, html, text, headers }) {
   return params;
 }
 
-export function buildSendGridPayload({ fromName, fromEmail, to, subject, html, text, headers }) {
+export function buildSendGridPayload({ fromName, fromEmail, to, subject, html, text, headers, attachments }) {
   const content = [];
   if (text) content.push({ type: 'text/plain', value: text });
   if (html) content.push({ type: 'text/html', value: html });
@@ -46,10 +47,14 @@ export function buildSendGridPayload({ fromName, fromEmail, to, subject, html, t
     content,
   };
   if (headers && Object.keys(headers).length) payload.headers = headers;
+  if (attachments?.length) payload.attachments = toSendGridAttachments(attachments);
   return payload;
 }
 
-export function buildSesPayload({ from, to, subject, html, text, headers }) {
+export function buildSesPayload({ from, to, subject, html, text, headers, attachments }) {
+  if (attachments?.length) {
+    throw new Error('AWS SES HTTP Simple API cannot send attachments. Use SES SMTP instead.');
+  }
   const body = {};
   if (html) body.Html = { Data: html, Charset: 'UTF-8' };
   if (text) body.Text = { Data: text, Charset: 'UTF-8' };
@@ -149,11 +154,31 @@ async function readApiError(res, fallback) {
   throw new Error(msg);
 }
 
-export async function sendViaMailgun(sender, { from, to, subject, html, text, headers }) {
+export function buildMailgunMultipart({ from, to, subject, html, text, headers, attachments }) {
+  const form = new FormData();
+  form.append('from', from);
+  form.append('to', to);
+  form.append('subject', subject || '');
+  if (html) form.append('html', html);
+  if (text) form.append('text', text);
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (v == null || v === '') continue;
+    form.append(`h:${k}`, String(v));
+  }
+  for (const a of attachments || []) {
+    const buf = Buffer.from(a.content, 'base64');
+    form.append('attachment', new Blob([buf], { type: a.content_type || 'application/octet-stream' }), a.filename);
+  }
+  return form;
+}
+
+export async function sendViaMailgun(sender, { from, to, subject, html, text, headers, attachments }) {
   const domain = mailgunDomain(sender);
   if (!domain) throw new Error('Mailgun sending domain is required (username)');
   if (!sender.password) throw new Error('Mailgun API key is required');
-  const form = buildMailgunForm({ from, to, subject, html, text, headers });
+  const form = attachments?.length
+    ? buildMailgunMultipart({ from, to, subject, html, text, headers, attachments })
+    : buildMailgunForm({ from, to, subject, html, text, headers });
   const res = await fetch(`${mailgunApiBase(sender)}/v3/${encodeURIComponent(domain)}/messages`, {
     method: 'POST',
     headers: {
@@ -178,9 +203,9 @@ export async function verifyMailgun(sender) {
   return true;
 }
 
-export async function sendViaSendGrid(sender, { fromName, fromEmail, to, subject, html, text, headers }) {
+export async function sendViaSendGrid(sender, { fromName, fromEmail, to, subject, html, text, headers, attachments }) {
   if (!sender.password) throw new Error('SendGrid API key is required');
-  const payload = buildSendGridPayload({ fromName, fromEmail, to, subject, html, text, headers });
+  const payload = buildSendGridPayload({ fromName, fromEmail, to, subject, html, text, headers, attachments });
   const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
     headers: {
@@ -236,8 +261,8 @@ async function sesRequest(sender, { method, path, body }) {
   return text ? JSON.parse(text) : {};
 }
 
-export async function sendViaSes(sender, { from, to, subject, html, text, headers }) {
-  const payload = buildSesPayload({ from, to, subject, html, text, headers });
+export async function sendViaSes(sender, { from, to, subject, html, text, headers, attachments }) {
+  const payload = buildSesPayload({ from, to, subject, html, text, headers, attachments });
   const data = await sesRequest(sender, {
     method: 'POST',
     path: '/v2/email/send-email',

@@ -10,7 +10,8 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
 
 ## What you can do
 
-- **Compose** — paste leads (no file import), generate an HTML letter, preview merges, queue a send.
+- **Compose** — paste leads (no file import), generate an HTML letter, attach that HTML (or a small PDF/image), preview merges, queue a send.
+- **HTML spam check** — flags junk-mail phrases in the subject/HTML and blocks credential-harvest copy. “Strip risky phrases” rewrites wording; it does not sneak past filters.
 - **Sender presets**
   - **SMTP** — any host you own
   - **OVH** — `smtp.mail.ovh.net` / `ssl0.ovh.net`

@@ -270,5 +270,7 @@ CREATE TABLE IF NOT EXISTS mx_cache (
 `);
 
 addColumn('warmup_plans', 'auto_reply', 'INTEGER NOT NULL DEFAULT 1');
+addColumn('campaigns', 'attachments', "TEXT NOT NULL DEFAULT '[]'");
+addColumn('messages', 'attachments', "TEXT NOT NULL DEFAULT '[]'");
 
 export default db;

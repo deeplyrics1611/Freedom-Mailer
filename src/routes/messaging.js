@@ -3,6 +3,8 @@ import { db } from '../db.js';
 import { requireApiKey, requireFeature } from '../auth.js';
 import { isSuppressed } from '../compliance.js';
 import { smsEnabled } from '../config.js';
+import { normalizeAttachments } from '../attachments.js';
+import { analyzeContent, sendBlockError } from '../spamcheck.js';
 
 // Transactional sending API. Authenticated with X-API-Key.
 // Transactional mail (password resets, receipts, etc.) is one-to-one and
@@ -33,6 +35,16 @@ router.post('/email', (req, res) => {
     return res.status(403).json({ error: 'Recipient is on your suppression list' });
   }
 
+  const packed = normalizeAttachments(req.body?.attachments, {
+    attachHtml: !!req.body?.attach_html,
+    html,
+    htmlName: req.body?.attach_html_name || 'letter.html',
+  });
+  if (packed.error) return res.status(400).json({ error: packed.error });
+  const spam = analyzeContent({ subject, html, text, attachments: packed.attachments });
+  const blocked = sendBlockError(spam);
+  if (blocked) return res.status(400).json({ error: blocked, spam });
+
   let senderId = null;
   if (sender_id) {
     const sender = db
@@ -45,11 +57,11 @@ router.post('/email', (req, res) => {
 
   const info = db
     .prepare(
-      `INSERT INTO messages (user_id, channel, sender_id, to_address, subject, html, text, status, source)
-       VALUES (?, 'email', ?, ?, ?, ?, ?, 'queued', 'api')`
+      `INSERT INTO messages (user_id, channel, sender_id, to_address, subject, html, text, status, source, attachments)
+       VALUES (?, 'email', ?, ?, ?, ?, ?, 'queued', 'api', ?)`
     )
-    .run(req.user.id, senderId, addr, subject, html, text);
-  res.status(202).json({ id: info.lastInsertRowid, status: 'queued' });
+    .run(req.user.id, senderId, addr, subject, html, text, packed.json);
+  res.status(202).json({ id: info.lastInsertRowid, status: 'queued', attachments: packed.attachments.length });
 });
 
 // POST /api/v1/sms  { to, body }
