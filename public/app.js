@@ -151,7 +151,6 @@ const NAV = [
 const ADMIN_NAV = [
   ['admin', '🎛️ Admin'],
   ['users', '👥 Clients'],
-  ['vnc', '🖥 VNC'],
 ];
 const ROUTE_FEATURE = {
   compose: 'compose',
@@ -786,17 +785,10 @@ jordan@yourbrand.com"></textarea>
   }));
 };
 
-views.vnc = async () => {
-  const data = await api('/api/vnc');
-  view(`<div class="page-head"><h1>VNC viewer</h1></div>
-    <p class="sub">Admin only. Open a desktop you operate — TightVNC, TigerVNC, RealVNC, or any RFB server — inside this panel. The mailer proxies your session; it does not scan for listeners or guess passwords.</p>
-    <div class="notice">
-      Save only machines you own or are allowed to control. Classic VNC is not encrypted on the last hop.
-      Prefer an SSH tunnel to <code>127.0.0.1</code> (or a VPN) and point the host at that tunnel. Default port is <code>5900</code>.
-    </div>
-
-    <section class="card admin-panel" style="margin:16px 0">
-      <h2>Save a desktop</h2>
+function vncSectionHtml() {
+  return `<section id="admin-vnc" class="card admin-panel" style="margin:18px 0">
+      <h2>VNC</h2>
+      <p class="muted small">Admin only. Open a desktop you operate (TightVNC, TigerVNC, RealVNC). The mailer proxies your session — it does not scan for listeners or guess passwords. Classic VNC is not encrypted on the last hop; prefer an SSH tunnel to <code>127.0.0.1</code>. Default port <code>5900</code>.</p>
       <form id="vnc-form" class="form-grid">
         <div class="field"><label>Label</label><input name="label" placeholder="Office workstation"></div>
         <div class="field"><label>Host</label><input name="host" required placeholder="127.0.0.1 or desk.yourbrand.com"></div>
@@ -808,31 +800,40 @@ views.vnc = async () => {
           <span>This desktop is mine, or I am allowed to operate it.</span></div>
         <div class="actions full"><button type="submit">Save desktop</button></div>
       </form>
-    </section>
-
-    <div id="vnc-list"></div>
-
-    <section class="vnc-stage">
-      <header>
-        <div>
-          <b id="vnc-title">Viewer</b>
-          <div class="muted small" id="vnc-status">Pick a saved desktop and click Connect.</div>
+      <div id="vnc-list" style="margin-top:12px"></div>
+      <div class="vnc-stage" style="margin:14px 0 0">
+        <header>
+          <div>
+            <b id="vnc-title">Viewer</b>
+            <div class="muted small" id="vnc-status">Pick a saved desktop and click Connect.</div>
+          </div>
+          <div class="actions" style="margin:0">
+            <button type="button" class="secondary tiny" id="vnc-cad" disabled>Ctrl+Alt+Del</button>
+            <button type="button" class="secondary tiny" id="vnc-scale" disabled>Fit / 1:1</button>
+            <button type="button" class="tiny danger" id="vnc-disc" disabled>Disconnect</button>
+          </div>
+        </header>
+        <div class="vnc-clip">
+          <input id="vnc-clip" placeholder="Paste text to the remote clipboard, then Enter">
         </div>
-        <div class="actions" style="margin:0">
-          <button type="button" class="secondary tiny" id="vnc-cad" disabled>Ctrl+Alt+Del</button>
-          <button type="button" class="secondary tiny" id="vnc-scale" disabled>Fit / 1:1</button>
-          <button type="button" class="tiny danger" id="vnc-disc" disabled>Disconnect</button>
-        </div>
-      </header>
-      <div class="vnc-clip">
-        <input id="vnc-clip" placeholder="Paste text to the remote clipboard, then Enter">
+        <div id="vnc-screen" class="vnc-screen"></div>
       </div>
-      <div id="vnc-screen" class="vnc-screen"></div>
-    </section>`);
+    </section>`;
+}
+
+async function bindVncSection() {
+  if (!$('vnc-form')) return;
+  let targets = [];
+
+  function setLive(on) {
+    $('vnc-cad').disabled = !on;
+    $('vnc-scale').disabled = !on;
+    $('vnc-disc').disabled = !on;
+  }
 
   function paintList() {
-    $('vnc-list').innerHTML = (data.targets || []).map((t) => `
-      <article class="client-card">
+    $('vnc-list').innerHTML = targets.map((t) => `
+      <article class="client-card" style="margin-bottom:10px">
         <header>
           <div>
             <b>${esc(t.label)}</b>
@@ -855,15 +856,9 @@ views.vnc = async () => {
         if (!confirm('Remove this saved desktop?')) return;
         await api(`/api/vnc/${b.dataset.vncd}`, { method: 'DELETE' });
         disconnectVnc();
-        views.vnc();
+        await reload();
       });
     });
-  }
-
-  function setLive(on) {
-    $('vnc-cad').disabled = !on;
-    $('vnc-scale').disabled = !on;
-    $('vnc-disc').disabled = !on;
   }
 
   async function connectVnc(id) {
@@ -907,6 +902,16 @@ views.vnc = async () => {
     }
   }
 
+  async function reload() {
+    try {
+      const data = await api('/api/vnc');
+      targets = data.targets || [];
+      paintList();
+    } catch (err) {
+      $('vnc-list').innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    }
+  }
+
   $('vnc-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
@@ -915,8 +920,10 @@ views.vnc = async () => {
     b.port = b.port ? parseInt(b.port, 10) : 5900;
     try {
       await api('/api/vnc', { method: 'POST', body: b });
+      e.target.reset();
+      $('vnc-ok').checked = false;
       toast('Desktop saved');
-      views.vnc();
+      await reload();
     } catch (err) { toast(err.message, 'err'); }
   });
   $('vnc-disc').addEventListener('click', () => {
@@ -935,8 +942,8 @@ views.vnc = async () => {
     vncRfb.clipboardPasteFrom($('vnc-clip').value);
     toast('Sent to remote clipboard');
   });
-  paintList();
-};
+  await reload();
+}
 
 function senderOption(s) {
   const region = s.region ? ` · ${esc(s.region)}` : '';
@@ -2257,10 +2264,7 @@ views.admin = async () => {
         <h1>Admin dashboard</h1>
         <p class="sub">Control every client: licenses, tools they can see, tracking host, sending kill-switch, and live traffic.</p>
       </div>
-      <div class="actions" style="margin:0">
-        <button class="secondary" id="admin-vnc" type="button">Open VNC</button>
-        <button class="secondary" id="admin-refresh">Refresh</button>
-      </div>
+      <button class="secondary" id="admin-refresh">Refresh</button>
     </div>
     <div class="cards admin-kpis">
       <div class="card"><div class="stat">${s.clients}</div><div class="stat-label">Clients</div></div>
@@ -2303,6 +2307,8 @@ views.admin = async () => {
       </section>
     </div>
 
+    ${vncSectionHtml()}
+
     <div class="admin-toolbar">
       <h2>Clients — licenses, usage, tools</h2>
       <input id="admin-search" type="search" placeholder="Search email or notes">
@@ -2317,7 +2323,7 @@ views.admin = async () => {
     <table id="admin-events"></table>`);
 
   $('admin-refresh').addEventListener('click', () => views.admin());
-  $('admin-vnc').addEventListener('click', () => go('vnc'));
+  bindVncSection();
   $('admin-create').addEventListener('submit', async (e) => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
