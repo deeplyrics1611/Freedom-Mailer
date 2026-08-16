@@ -2266,6 +2266,12 @@ views.admin = async () => {
       </div>
       <button class="secondary" id="admin-refresh">Refresh</button>
     </div>
+    <div class="kind-tabs" id="admin-tabs">
+      <button type="button" data-atab="vnc" class="active">VNC</button>
+      <button type="button" data-atab="command">Command</button>
+    </div>
+    <div data-apane="vnc">${vncSectionHtml()}</div>
+    <div data-apane="command" class="hidden">
     <div class="cards admin-kpis">
       <div class="card"><div class="stat">${s.clients}</div><div class="stat-label">Clients</div></div>
       <div class="card"><div class="stat">${s.license_ok}</div><div class="stat-label">Licenses live</div></div>
@@ -2307,8 +2313,6 @@ views.admin = async () => {
       </section>
     </div>
 
-    ${vncSectionHtml()}
-
     <div class="admin-toolbar">
       <h2>Clients — licenses, usage, tools</h2>
       <input id="admin-search" type="search" placeholder="Search email or notes">
@@ -2320,7 +2324,17 @@ views.admin = async () => {
     <table id="admin-traffic"></table>
 
     <h2>Operator log</h2>
-    <table id="admin-events"></table>`);
+    <table id="admin-events"></table>
+    </div>`);
+
+  const showAdminPane = (id) => {
+    document.querySelectorAll('#admin-tabs [data-atab]').forEach((b) => b.classList.toggle('active', b.dataset.atab === id));
+    document.querySelectorAll('[data-apane]').forEach((p) => p.classList.toggle('hidden', p.dataset.apane !== id));
+  };
+  $('admin-tabs').querySelectorAll('[data-atab]').forEach((b) => {
+    b.addEventListener('click', () => showAdminPane(b.dataset.atab));
+  });
+  showAdminPane('vnc');
 
   $('admin-refresh').addEventListener('click', () => views.admin());
   bindVncSection();
