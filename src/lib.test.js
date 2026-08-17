@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseLeads, toSmsAddress, isEmail } from './leads.js';
 import { renderTemplate, expandVars, listPlaceholders } from './placeholders.js';
 import { generateLetter, letterCatalog } from './letters.js';
-import { SMTP_PRESETS, SENDER_KINDS, applyProviderDefaults, awsSesSmtpHost } from './presets.js';
+import { SMTP_PRESETS, SENDER_KINDS, applyProviderDefaults, awsSesSmtpHost, GMAIL_SETUP, normalizeGmailAppPassword } from './presets.js';
 import {
   tokenUrl,
   buildGraphMessage,
@@ -69,6 +69,13 @@ alex@ex.com,Alex Rivera,+15550100,Northwind`;
     assert.equal(leads[0].phone, '+15550100');
   });
 
+  it('reads title from a header row', () => {
+    const { leads } = parseLeads(`email,name,company,title
+alex@ex.com,Alex Rivera,Northwind,Buyer`);
+    assert.equal(leads[0].title, 'Buyer');
+    assert.equal(leads[0].company, 'Northwind');
+  });
+
   it('dedupes emails', () => {
     const { total } = parseLeads('a@x.com\na@x.com');
     assert.equal(total, 1);
@@ -116,8 +123,28 @@ describe('letters', () => {
     assert.ok(ids.includes('invoice'));
     assert.ok(ids.includes('signature_request'));
     assert.ok(ids.includes('video_meeting'));
+    assert.ok(ids.includes('quote_request'));
     assert.match(generateLetter('invoice', { company: 'Northwind Labs', amount: '$10' }).html, /You have an invoice/);
     assert.equal(generateLetter('invoice', {}, 'en', { variant: 5 }).variant, 5);
+  });
+
+  it('personalizes a request-for-quote per lead tokens', () => {
+    const letter = generateLetter('quote_request', {
+      from_company: 'Harbor Supply',
+      sender_name: 'Pat Morgan',
+      service: 'custom millwork',
+      project: 'Lobby renovation',
+      company: 'Northwind Labs',
+    });
+    assert.match(letter.html, /Harbor Supply/);
+    assert.match(letter.html, /Pat Morgan/);
+    assert.match(letter.html, /\{\{first_name\|there\}\}/);
+    assert.match(letter.html, /\{\{company\|your team\}\}/);
+    assert.match(letter.html, /\{\{title\|the team there\}\}/);
+    assert.match(letter.html, /\{\{email\}\}/);
+    assert.match(letter.subject, /\{\{company\|your team\}\}/);
+    assert.equal(/gmail|google meet|docusign/i.test(letter.html), false);
+    assert.equal(/click here|act now/i.test(letter.html), false);
   });
 
   it('does not impersonate third-party brands', () => {
@@ -244,9 +271,9 @@ describe('links', () => {
 });
 
 describe('presets', () => {
-  it('covers smtp, ovh, webmail, japan, smtp_sms, office365, mailgun, sendgrid, postfix, aws, gcp', () => {
+  it('covers smtp, ovh, webmail, gmail, japan, smtp_sms, office365, mailgun, sendgrid, postfix, aws, gcp', () => {
     const kinds = new Set(SENDER_KINDS.map((k) => k.id));
-    for (const id of ['smtp', 'ovh', 'webmail', 'japan', 'smtp_sms', 'office365', 'mailgun', 'sendgrid', 'postfix', 'aws', 'gcp']) {
+    for (const id of ['smtp', 'ovh', 'webmail', 'gmail', 'japan', 'smtp_sms', 'office365', 'mailgun', 'sendgrid', 'postfix', 'aws', 'gcp']) {
       assert.ok(kinds.has(id), id);
     }
     assert.ok(SMTP_PRESETS.some((p) => p.host === 'smtp.mail.ovh.net'));
@@ -257,7 +284,11 @@ describe('presets', () => {
     assert.ok(SMTP_PRESETS.some((p) => p.kind === 'postfix'));
     assert.ok(SMTP_PRESETS.some((p) => p.host.includes('email-smtp.')));
     assert.ok(SMTP_PRESETS.some((p) => p.id === 'gcp-relay' && p.host === 'smtp-relay.gmail.com'));
+    assert.ok(SMTP_PRESETS.some((p) => p.kind === 'gmail' && p.host === 'smtp.gmail.com'));
+    assert.equal(SENDER_KINDS.find((k) => k.id === 'gmail').label, 'Gmail');
     assert.equal(SENDER_KINDS.find((k) => k.id === 'gcp').label, 'Google Cloud (us-east4)');
+    assert.ok(GMAIL_SETUP.length >= 4);
+    assert.equal(normalizeGmailAppPassword('abcd efgh ijkl mnop'), 'abcdefghijklmnop');
   });
 
   it('fills Mailgun / SendGrid / AWS hosts from region and mode', () => {
@@ -273,6 +304,12 @@ describe('presets', () => {
     assert.equal(gcp.host, 'smtp-relay.gmail.com');
     assert.equal(gcp.region, 'us-east4');
     assert.equal(gcp.port, 587);
+    const gmail = applyProviderDefaults({ kind: 'gmail' });
+    assert.equal(gmail.host, 'smtp.gmail.com');
+    assert.equal(gmail.port, 587);
+    assert.equal(gmail.secure, false);
+    const gmailSsl = applyProviderDefaults({ kind: 'gmail', port: 465 });
+    assert.equal(gmailSsl.secure, true);
   });
 });
 

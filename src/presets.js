@@ -15,7 +15,12 @@ export const SENDER_KINDS = [
   {
     id: 'webmail',
     label: 'Webmail',
-    blurb: 'Gmail, Outlook, Yahoo, iCloud, Zoho — sign in with the mailbox SMTP.',
+    blurb: 'Outlook, Yahoo, iCloud, Zoho — sign in with the mailbox SMTP.',
+  },
+  {
+    id: 'gmail',
+    label: 'Gmail',
+    blurb: 'Your Gmail or Google Workspace mailbox via smtp.gmail.com and a Google App Password.',
   },
   {
     id: 'japan',
@@ -59,6 +64,19 @@ export const SENDER_KINDS = [
   },
 ];
 
+export const GMAIL_SETUP = [
+  'Use your own Gmail or Google Workspace address as From and SMTP username.',
+  'Turn on 2-Step Verification at myaccount.google.com/security.',
+  'Create a 16-character App Password (Google Account → Security → App passwords). Paste it here — not your normal Gmail password. Spaces are stripped.',
+  'smtp.gmail.com · STARTTLS 587 (default) or SSL 465.',
+  'Gmail consumer accounts are typically limited to about 500 outbound messages per day. Google Workspace limits are higher.',
+  'Request-for-quote letters keep {{first_name}}, {{company}}, {{title}}, and {{email}} so each pasted lead is filled in at send time.',
+];
+
+export function normalizeGmailAppPassword(password) {
+  return String(password || '').replace(/\s+/g, '');
+}
+
 export const SMTP_PRESETS = [
   {
     id: 'custom',
@@ -89,6 +107,24 @@ export const SMTP_PRESETS = [
   },
   {
     id: 'gmail',
+    kind: 'gmail',
+    label: 'Gmail (App Password)',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    hint: 'Username is the full Gmail address. Password must be a 16-character App Password, not your Google login.',
+  },
+  {
+    id: 'gmail-465',
+    kind: 'gmail',
+    label: 'Gmail (SSL 465)',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    hint: 'Same Gmail mailbox over implicit TLS. Use if port 587 is blocked.',
+  },
+  {
+    id: 'gmail-webmail',
     kind: 'webmail',
     label: 'Gmail',
     host: 'smtp.gmail.com',
@@ -454,6 +490,12 @@ export function applyProviderDefaults({ kind, auth_mode = '', region = '', host 
       portVal = portVal || 587;
       secureVal = Number(portVal) === 465;
     }
+  }
+
+  if (kind === 'gmail') {
+    hostVal = hostVal || 'smtp.gmail.com';
+    portVal = portVal || 587;
+    if (secureVal === undefined) secureVal = Number(portVal) === 465;
   }
 
   if (kind === 'gcp') {

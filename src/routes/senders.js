@@ -9,8 +9,10 @@ import {
   MAILGUN_REGIONS,
   AWS_SES_REGIONS,
   GCP_REGIONS,
+  GMAIL_SETUP,
   presetById,
   applyProviderDefaults,
+  normalizeGmailAppPassword,
 } from '../presets.js';
 
 const router = Router();
@@ -27,6 +29,7 @@ router.get('/presets', (req, res) => {
     mailgun_regions: MAILGUN_REGIONS,
     aws_regions: AWS_SES_REGIONS,
     gcp_regions: GCP_REGIONS,
+    gmail: GMAIL_SETUP,
   });
 });
 
@@ -128,12 +131,19 @@ router.post('/', async (req, res) => {
   modeVal = filled.auth_mode;
   if (req.body.secure === undefined && filled.secure !== undefined) secureVal = filled.secure;
 
+  let passVal = password;
+  if (kindVal === 'gmail') {
+    userVal = userVal || from_email || '';
+    passVal = normalizeGmailAppPassword(password);
+    hostVal = hostVal || 'smtp.gmail.com';
+  }
+
   const err = validateSender({
     kindVal,
     auth_mode: modeVal,
     hostVal,
     username: userVal,
-    password,
+    password: passVal,
     label,
     from_email,
     sms_gateway,
@@ -156,7 +166,7 @@ router.post('/', async (req, res) => {
       portVal,
       secureVal ? 1 : 0,
       kindVal === 'postfix' || kindVal === 'gcp' ? (userVal || '') : (userVal || from_email || ''),
-      password || (kindVal === 'office365' ? 'graph' : ''),
+      passVal || (kindVal === 'office365' ? 'graph' : ''),
       from_name || label,
       from_email,
       sms_gateway,

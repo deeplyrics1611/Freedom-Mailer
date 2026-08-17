@@ -222,7 +222,7 @@ const badge = (status) => {
   const map = {
     sent: 'ok', confirmed: 'ok', verified: 'ok', queued: 'warn', pending: 'warn',
     sending: 'warn', draft: 'muted', failed: 'err', skipped: 'muted', unsubscribed: 'muted',
-    smtp: 'muted', ovh: 'ok', webmail: 'warn', japan: 'ok', smtp_sms: 'warn',
+    smtp: 'muted', ovh: 'ok', webmail: 'warn', gmail: 'ok', japan: 'ok', smtp_sms: 'warn',
     office365: 'ok', graph: 'ok', smtp_auth: 'warn',
     mailgun: 'ok', sendgrid: 'ok', postfix: 'warn', aws: 'ok', gcp: 'ok', api: 'ok',
     '3day': 'warn', monthly: 'ok', lifetime: 'ok', expired: 'err',
@@ -963,20 +963,25 @@ async function fillSenderSelect(id, preferred) {
   el.innerHTML = senders.map(senderOption).join('');
   const ids = new Set(senders.map((s) => String(s.id)));
   const verified = senders.filter((s) => s.verified);
-  const pick = ids.has(String(current)) ? current : String(verified[0]?.id || senders[0].id);
+  const gmail = senders.filter(
+    (s) => s.kind === 'gmail' || /@(gmail|googlemail)\.com$/i.test(s.from_email || '')
+  );
+  const pick = ids.has(String(current))
+    ? current
+    : String(gmail.find((s) => s.verified)?.id || gmail[0]?.id || verified[0]?.id || senders[0].id);
   el.value = pick;
   return senders;
 }
 
 views.compose = async () => {
-  const [senders, letters, ai, lists] = await Promise.all([
+  let [senders, letters, ai, lists] = await Promise.all([
     api('/api/senders'),
     api('/api/letters'),
     api('/api/ai/status'),
     api('/api/lists'),
   ]);
   view(`<div class="page-head"><h1>Compose &amp; send</h1></div>
-    <p class="sub">Paste recipients, pick a letter, merge placeholders, then queue the send from a sender you own. New senders show up here immediately — click Refresh if you just added one.</p>
+    <p class="sub">Paste recipients, pick a letter, merge placeholders, then queue the send from a sender you own. Gmail senders use an App Password. Request-for-quote letters fill {{first_name}}, {{company}}, {{title}}, and {{email}} for each lead.</p>
     <div class="compose">
       <div>
         <form id="compose-form">
@@ -993,9 +998,9 @@ views.compose = async () => {
           </div>
 
           <h2>Recipients — paste, don’t upload</h2>
-          <p class="muted small">One per line. <code>email</code>, <code>Name &lt;email&gt;</code>, or <code>email, name, phone, company</code>. Optional header row.</p>
-          <textarea id="c-leads" rows="8" placeholder="email, name, phone, company
-alex@example.com, Alex Rivera, +1 555 0100, Northwind
+          <p class="muted small">One per line. <code>email</code>, <code>Name &lt;email&gt;</code>, or <code>email, name, phone, company, title</code>. Optional header row. Each row becomes one personalized quote request.</p>
+          <textarea id="c-leads" rows="8" placeholder="email, name, phone, company, title
+alex@example.com, Alex Rivera, +1 555 0100, Northwind, Buyer
 Jane Doe <jane@example.com>"></textarea>
           <div class="actions" style="margin:8px 0 4px">
             <button type="button" class="secondary tiny" id="c-parse">Parse paste</button>
@@ -1004,12 +1009,13 @@ Jane Doe <jane@example.com>"></textarea>
           <div id="c-parse-box" class="parse-box hidden"></div>
 
           <h2>HTML letters</h2>
-          <p class="muted small">Invoice, e-sign, meeting invite, and shared files — real HTML from <b>your</b> company. They are not Adobe, DocuSign, Zoom, or SharePoint messages. Pick a layout, generate, then send from your sender.</p>
-          <div class="notice">No third-party brand logos and no layout clones. Put your own pay / sign / join / files URL in the button.</div>
+          <p class="muted small">Start with <b>Request for quote</b> to personalize a pricing ask for every pasted lead. Invoice, e-sign, meeting invite, and shared files are also from <b>your</b> company — not Adobe, DocuSign, Zoom, or SharePoint.</p>
+          <div class="notice">Gmail: add the mailbox under Senders with a 16-character App Password. RFQ letters keep lead merge tokens so each recipient sees their name and company. No third-party brand logos.</div>
           <div id="letter-grid" class="letter-grid"></div>
           <div id="letter-fields" class="form-grid"></div>
           <div class="actions">
             <button type="button" class="secondary" id="c-gen" disabled>Generate letter</button>
+            <button type="button" id="c-rfq">Personalize RFQ</button>
             <button type="button" class="secondary" id="c-five" disabled>5 layouts</button>
             <button type="button" class="secondary" id="c-dl-html">Download HTML</button>
             <select id="c-variant" style="max-width:160px"></select>
@@ -1093,13 +1099,24 @@ Jane Doe <jane@example.com>"></textarea>
     </div>`);
 
   await fillSenderSelect('c-sender');
-  $('c-sender-hint').textContent = senders.length
-    ? `${senders.length} sender(s). Pick one — unverified identities are checked when you queue.`
-    : 'Add a sender under Senders, then click Refresh.';
+  function currentSender() {
+    const id = $('c-sender').value;
+    return senders.find((s) => String(s.id) === String(id)) || null;
+  }
+  function senderHint(rows) {
+    senders = rows;
+    const gmailCount = rows.filter((s) => s.kind === 'gmail').length;
+    if (!rows.length) return 'Add a Gmail sender under Senders (App Password), then click Refresh.';
+    if (gmailCount) {
+      return `${rows.length} sender(s), ${gmailCount} Gmail. Request-for-quote fills each pasted lead. Unverified identities are checked when you queue.`;
+    }
+    return `${rows.length} sender(s). Add a Gmail sender with an App Password to send from Gmail. Unverified identities are checked when you queue.`;
+  }
+  $('c-sender-hint').textContent = senderHint(senders);
   $('c-sender-refresh').addEventListener('click', async () => {
     try {
       const rows = await fillSenderSelect('c-sender');
-      $('c-sender-hint').textContent = rows.length ? `${rows.length} sender(s) loaded.` : 'No senders yet.';
+      $('c-sender-hint').textContent = senderHint(rows);
       toast(rows.length ? `Loaded ${rows.length} sender(s)` : 'No senders yet');
     } catch (err) { toast(err.message, 'err'); }
   });
@@ -1131,17 +1148,31 @@ Jane Doe <jane@example.com>"></textarea>
     $('c-gen').disabled = false;
     $('c-five').disabled = false;
     box.innerHTML = meta.fields.map((f) =>
-      `<div class="field ${['note','description','agenda'].includes(f.key) ? 'full' : ''}">
+      `<div class="field ${['note','description','agenda','details'].includes(f.key) ? 'full' : ''}">
         <label>${esc(f.label)}</label>
         <input data-fk="${esc(f.key)}" placeholder="${esc(f.placeholder || '')}">
       </div>`
     ).join('');
   }
 
-  $('letter-grid').querySelectorAll('.letter-card').forEach((b) => b.addEventListener('click', () => {
-    selectedKind = b.dataset.kind;
-    $('letter-grid').querySelectorAll('.letter-card').forEach((x) => x.classList.toggle('active', x === b));
+  function selectLetterKind(kind) {
+    selectedKind = kind;
+    $('letter-grid').querySelectorAll('.letter-card').forEach((x) => x.classList.toggle('active', x.dataset.kind === kind));
     renderLetterFields();
+  }
+
+  function prefillRfqFromSender() {
+    const s = currentSender();
+    if (!s) return;
+    const company = $('letter-fields').querySelector('[data-fk="from_company"]');
+    const name = $('letter-fields').querySelector('[data-fk="sender_name"]');
+    if (company && !company.value) company.value = s.from_name || '';
+    if (name && !name.value && s.from_name) name.value = s.from_name;
+  }
+
+  $('letter-grid').querySelectorAll('.letter-card').forEach((b) => b.addEventListener('click', () => {
+    selectLetterKind(b.dataset.kind);
+    if (b.dataset.kind === 'quote_request') prefillRfqFromSender();
   }));
 
   function letterFields() {
@@ -1167,6 +1198,23 @@ Jane Doe <jane@example.com>"></textarea>
       toast('Letter generated');
     } catch (err) { toast(err.message, 'err'); }
   });
+  $('c-rfq').addEventListener('click', async () => {
+    selectLetterKind('quote_request');
+    prefillRfqFromSender();
+    try {
+      const r = await api('/api/letters/generate', {
+        method: 'POST',
+        body: { kind: 'quote_request', fields: letterFields(), locale: $('c-locale').value, variant: $('c-variant').value },
+      });
+      applyLetter(r);
+      if (!$('c-name').value) $('c-name').value = 'Request for quote';
+      toast('RFQ personalized — each pasted lead fills name, company, title, and email');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  if (letterMap.quote_request) {
+    selectLetterKind('quote_request');
+    prefillRfqFromSender();
+  }
   $('c-five').addEventListener('click', async () => {
     try {
       const r = await api('/api/letters/variations', {
@@ -1667,8 +1715,8 @@ views.senders = async () => {
   const apiKinds = new Set(['mailgun', 'sendgrid', 'aws']);
   const regionKinds = new Set(['mailgun', 'aws', 'gcp']);
   view(`<div class="page-head"><h1>Senders</h1></div>
-    <p class="sub">Mailboxes and ESP accounts you own: SMTP, Google Cloud (us-east4), Mailgun, SendGrid, Postfix, AWS SES, OVH, webmail, Japan hosts. Credentials stay on this server.</p>
-    <div class="notice">Microsoft 365 tenant (Graph app + SMTP AUTH) lives under <a data-go="office365">Office 365</a>. Google Cloud uses <b>smtp-relay.gmail.com</b> in us-east4 (or Gmail SMTP). Mailgun / SendGrid / AWS send through <b>your</b> verified domain — not a shared relay.</div>
+    <p class="sub">Mailboxes and ESP accounts you own. For Gmail, use a 16-character App Password on smtp.gmail.com — not your Google login. Credentials stay on this server.</p>
+    <div class="notice">Gmail consumer accounts are typically limited to about 500 messages per day. Microsoft 365 tenant send lives under <a data-go="office365">Office 365</a>. Google Cloud uses <b>smtp-relay.gmail.com</b> in us-east4. Mailgun / SendGrid / AWS send through <b>your</b> verified domain.</div>
     <div class="kind-tabs" id="kind-tabs">
       ${presets.kinds.map((k) => `<button type="button" data-kind="${k.id}">${esc(k.label)}</button>`).join('')}
     </div>
@@ -1687,7 +1735,7 @@ views.senders = async () => {
         <select name="region" id="s-region"></select>
       </div>
       <div class="field"><label>Label</label><input name="label" required placeholder="Billing mailbox"></div>
-      <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="hello@yourdomain.com"></div>
+      <div class="field"><label>From email</label><input name="from_email" id="s-from" type="email" required placeholder="you@gmail.com"></div>
       <div class="field"><label>From name</label><input name="from_name" placeholder="Your Company"></div>
       <div class="field" id="s-host-wrap"><label id="s-host-label">SMTP host</label><input name="host" id="s-host" required placeholder="smtp.yourprovider.com"></div>
       <div class="field" id="s-port-wrap"><label>Port</label><input name="port" id="s-port" type="number" value="587"></div>
@@ -1702,13 +1750,14 @@ views.senders = async () => {
         <input name="sms_gateway" id="sms-gw" placeholder="txt.att.net or {number}@sms.yourhost.com" style="margin-top:8px">
         <p class="muted small">Each lead needs a phone number. The message is sent as email to <code>number@gateway</code>.</p>
       </div>
-      <input type="hidden" name="kind" id="s-kind" value="smtp">
+      <input type="hidden" name="kind" id="s-kind" value="gmail">
       <div class="actions full"><button type="submit">Add sender</button></div>
     </form>
+    <ol id="gmail-setup" class="setup-list hidden"></ol>
     <p class="muted small" id="preset-hint"></p>
     <table id="sender-table"></table>`);
 
-  let kind = 'smtp';
+  let kind = 'gmail';
   let applyingPreset = false;
 
   function fillRegions() {
@@ -1799,12 +1848,20 @@ views.senders = async () => {
       $('s-pass-label').textContent = 'SES SMTP password';
       $('s-user').placeholder = 'from SES console SMTP credentials';
       $('s-host-label').textContent = 'SMTP host';
+    } else if (kind === 'gmail') {
+      $('s-user-label').textContent = 'Gmail address (username)';
+      $('s-pass-label').textContent = '16-character App Password';
+      $('s-user').placeholder = 'you@gmail.com';
+      $('s-host-label').textContent = 'SMTP host';
+      $('s-host').placeholder = 'smtp.gmail.com';
+      $('s-from').placeholder = 'you@gmail.com';
     } else {
       $('s-user-label').textContent = 'Username';
       $('s-pass-label').textContent = 'Password / app password';
       $('s-user').placeholder = 'usually the full email';
       $('s-host-label').textContent = 'SMTP host';
       $('s-host').placeholder = 'smtp.yourprovider.com';
+      if ($('s-from')) $('s-from').placeholder = 'hello@yourdomain.com';
     }
     applyRegionHost();
   }
@@ -1821,7 +1878,16 @@ views.senders = async () => {
     $('s-region-wrap').classList.toggle('hidden', !regionKinds.has(kind));
     fillRegions();
     applyPreset();
+    const setup = $('gmail-setup');
+    if (setup) {
+      const steps = kind === 'gmail' ? (presets.gmail || []) : [];
+      setup.classList.toggle('hidden', !steps.length);
+      setup.innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join('');
+    }
     const label = document.querySelector('#sender-form [name=label]');
+    if (kind === 'gmail' && label && !label.value) {
+      label.placeholder = 'My Gmail';
+    }
     if (kind === 'gcp' && label && !label.value) {
       label.placeholder = 'Google Cloud (us-east4)';
       label.value = 'Google Cloud (us-east4)';
@@ -1854,6 +1920,11 @@ views.senders = async () => {
   });
   $('s-region').addEventListener('change', applyRegionHost);
   $('sms-gw-sel').addEventListener('change', () => { if ($('sms-gw-sel').value) $('sms-gw').value = $('sms-gw-sel').value; });
+  $('s-from')?.addEventListener('input', () => {
+    if (kind !== 'gmail') return;
+    if (!$('s-user').dataset.touched) $('s-user').value = $('s-from').value.trim();
+  });
+  $('s-user')?.addEventListener('input', () => { $('s-user').dataset.touched = '1'; });
   applyKind();
 
   document.querySelector('[data-go="office365"]')?.addEventListener('click', () => go('office365'));
@@ -1862,6 +1933,10 @@ views.senders = async () => {
     e.preventDefault();
     const f = e.target; const b = Object.fromEntries(new FormData(f));
     b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10) || (b.auth_mode === 'api' ? 443 : 587);
+    if (b.kind === 'gmail') {
+      b.password = String(b.password || '').replace(/\s+/g, '');
+      if (!b.username) b.username = b.from_email;
+    }
     try {
       const created = await api('/api/senders', { method: 'POST', body: b });
       f.reset();

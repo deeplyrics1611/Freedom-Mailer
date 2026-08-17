@@ -1,4 +1,4 @@
-import { htmlToText, renderTemplate } from './placeholders.js';
+import { htmlToText } from './placeholders.js';
 
 const esc = (s) =>
   String(s ?? '')
@@ -109,6 +109,21 @@ function shell({ preheader, accent, header, kicker, body, footerNote, variant = 
 
 export const LETTER_KINDS = [
   {
+    id: 'quote_request',
+    title: 'Request for quote',
+    blurb: 'Ask each lead for a quote. First name, company, title, and email fill in from your paste.',
+    accent: '#1d4ed8',
+    fields: [
+      { key: 'from_company', label: 'Your company', placeholder: 'Harbor Supply Co.' },
+      { key: 'sender_name', label: 'Your name', placeholder: 'Pat Morgan' },
+      { key: 'service', label: 'What you need quoted', placeholder: 'Custom millwork and install' },
+      { key: 'project', label: 'Project or job name', placeholder: 'Lobby renovation — Phase 1' },
+      { key: 'details', label: 'Scope notes', placeholder: 'Need pricing, lead time, and any drawing requirements.' },
+      { key: 'reply_url', label: 'Quote form URL (optional)', placeholder: 'https://yourcompany.com/rfq' },
+      { key: 'cta', label: 'Button label', placeholder: 'Open quote form' },
+    ],
+  },
+  {
     id: 'invoice',
     title: 'Invoice',
     blurb: 'A real HTML bill from your company: number, amount, due date, pay button.',
@@ -214,6 +229,12 @@ export const LETTER_KINDS = [
 
 export const SAMPLE_FIELDS = {
   company: 'Northwind Labs',
+  from_company: 'Northwind Labs',
+  sender_name: 'Jordan Lee',
+  service: 'custom millwork and install',
+  project: 'Lobby renovation — Phase 1',
+  details: 'Need pricing, lead time, and any drawing requirements.',
+  reply_url: 'https://northwind.example/rfq',
   invoice_number: 'INV-1042',
   amount: '$2,400.00',
   due_date: '1 September 2026',
@@ -241,14 +262,64 @@ export const SAMPLE_FIELDS = {
   receipt_url: 'https://pay.yourcompany.com/r/8891',
 };
 
+const APPLY_TOKEN = /\{\{\s*([a-zA-Z0-9_]+)(?:\s*\|\s*([^}]+?))?\s*\}\}/g;
+
 function applyFields(template, fields) {
-  return renderTemplate(template, fields);
+  if (!template) return template;
+  const filled = fields || {};
+  return String(template).replace(APPLY_TOKEN, (match, key, fallback) => {
+    if (!Object.prototype.hasOwnProperty.call(filled, key)) return match;
+    const val = filled[key];
+    if (val === undefined || val === null || String(val).trim() === '') {
+      return fallback !== undefined ? String(fallback).trim() : match;
+    }
+    return String(val);
+  });
 }
 
 function build(kind, fields, variant) {
   const f = { cta: '', ...fields };
   const company = f.company || '{{company|Your company}}';
   const v = variant;
+
+  if (kind === 'quote_request') {
+    const brand = f.from_company || f.company || 'our team';
+    const sender = f.sender_name || 'A teammate';
+    const service = f.service || 'the work below';
+    const project = f.project || '';
+    const details = f.details || '';
+    const reply = f.reply_url || '';
+    const cta = f.cta || 'Open quote form';
+    const html = shell({
+      variant: v,
+      preheader: `Quote request from ${brand} for ${service}.`,
+      accent: '#1d4ed8',
+      kicker: brand,
+      header: 'Request for quote',
+      footerNote: `This quote request was sent by ${esc(brand)} to {{name|you}}. It is not a notice from a marketplace or a third-party software brand.`,
+      body: `
+        <p>Hi {{first_name|there}},</p>
+        <p>${esc(sender)} at <strong>${esc(brand)}</strong> is requesting a quote from {{company|your team}}. Would {{title|the team there}} be able to price the work below?</p>
+        ${kv([
+          ['From', esc(brand)],
+          ['Contact', esc(sender)],
+          ['Service', esc(service)],
+          ['Project', project ? esc(project) : ''],
+          ['Lead email on file', '{{email}}'],
+        ])}
+        ${details ? `<p style="background:#eff6ff;border:1px solid #bfdbfe;padding:12px 14px;border-radius:8px">${esc(details)}</p>` : ''}
+        <p>Please reply to this message with pricing, availability, and any questions. A short written quote is enough.</p>
+        ${
+          reply
+            ? `<p style="margin:24px 0">${btn(reply, cta, '#1d4ed8')}</p>${linkBox(reply)}`
+            : '<p style="margin:18px 0 0;color:#57534e;font-size:14px">No form is required — reply to this email.</p>'
+        }`,
+    });
+    return {
+      subject: `Quote request for {{company|your team}} — ${project || service}`,
+      html,
+    };
+  }
 
   if (kind === 'signature_request') {
     const html = shell({
@@ -449,14 +520,34 @@ function nonempty(obj) {
   return out;
 }
 
+const LEAD_MERGE_KEYS = new Set([
+  'first_name',
+  'last_name',
+  'name',
+  'email',
+  'phone',
+  'company',
+  'title',
+  'custom1',
+  'custom2',
+]);
+
+function fieldsForApply(kind, filled) {
+  if (kind !== 'quote_request') return filled;
+  const out = { ...filled };
+  for (const k of LEAD_MERGE_KEYS) delete out[k];
+  return out;
+}
+
 export function generateLetter(kind, fields = {}, locale = 'en', opts = {}) {
   const meta = LETTER_KINDS.find((k) => k.id === kind);
   if (!meta) throw new Error('Unknown letter kind');
   const filled = nonempty(fields);
   const variant = Math.min(5, Math.max(1, parseInt(opts.variant || filled.variant || 1, 10) || 1));
   const built = build(kind, filled, variant);
-  let html = applyFields(built.html, filled);
-  let subject = applyFields(built.subject, filled);
+  const apply = fieldsForApply(kind, filled);
+  let html = applyFields(built.html, apply);
+  let subject = applyFields(built.subject, apply);
 
   if (locale === 'ja') {
     html = html.replace('Hi {{first_name|there}},', '{{first_name|お客様}} 様');

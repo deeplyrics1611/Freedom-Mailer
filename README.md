@@ -15,7 +15,8 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
 - **Sender presets**
   - **SMTP** — any host you own
   - **OVH** — `smtp.mail.ovh.net` / `ssl0.ovh.net`
-  - **Webmail** — Gmail, Outlook/Microsoft 365, Yahoo, iCloud, Zoho (official SMTP + app passwords)
+  - **Gmail** — `smtp.gmail.com` with a Google **App Password** (not the account password)
+  - **Webmail** — Outlook/Microsoft 365, Yahoo, iCloud, Zoho (official SMTP + app passwords)
   - **Japan mail** — Yahoo! Mail Japan, Sakura, Xserver, Lolipop, GMO, Biglobe, OCN
   - **SMTP → SMS** — short text emailed to `number@carrier-gateway`
   - **Office 365 tenant** — Entra app + Graph `sendMail`, or SMTP AUTH on `smtp.office365.com`
@@ -30,7 +31,7 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
 - **Deliverability** — debounce pasted addresses and sort by MX provider / ISP (Gmail, Microsoft 365, Yahoo, OVH, ISPs, …)
 - **VNC** — admin dashboard section to save desktops you operate and open them in the panel (noVNC + a WebSocket proxy). Not a scanner.
 - **Placeholders** — `{{name}}` `{{first_name}}` `{{email}}` `{{phone}}` `{{company}}` `{{title}}` `{{custom1}}` plus `{{first_name|there}}` fallbacks.
-- **HTML letters** — signature request, document review, invoice, shared file, video meeting, calendar invite, receipt. Branded with **your** company name and **your** URLs.
+- **HTML letters** — request for quote (personalized per lead), signature request, document review, invoice, shared file, video meeting, calendar invite, receipt. Branded with **your** company name and **your** URLs.
 - **AI help** — rewrite / translate / suggest subject. Uses `OPENAI_API_KEY` when set; otherwise local letter generation still works.
 - **Lists & campaigns** — double opt-in, one-click unsubscribe, suppression list, daily quotas.
 - **Transactional API** — `POST /api/v1/email` and `/api/v1/sms`.
@@ -38,8 +39,8 @@ including OVH, webmail hosts, Japanese mailbox SMTP, and email-to-SMS gateways.
 Paste format (copy/paste only — there is no CSV upload):
 
 ```
-email, name, phone, company
-alex@example.com, Alex Rivera, +1 555 0100, Northwind
+email, name, phone, company, title
+alex@example.com, Alex Rivera, +1 555 0100, Northwind, Buyer
 Jane Doe <jane@example.com>
 ```
 
@@ -101,9 +102,16 @@ Expired or disabled users are blocked at login, API, and the send worker.
 ## Sending flow
 
 1. Add a **sender** (pick a preset, enter your mailbox or ESP credentials) and **Verify**.
-2. Open **Compose**, paste recipients, generate or write a letter.
+2. Open **Compose**, paste recipients, generate or write a letter. **Personalize RFQ** builds a request-for-quote that fills `{{first_name}}`, `{{company}}`, `{{title}}`, and `{{email}}` for each lead.
 3. Confirm the people opted in, then **Queue send**.
 4. The worker delivers at `GLOBAL_RATE_PER_MINUTE`, injects an unsubscribe footer, and logs each attempt.
+
+### Gmail (App Password)
+
+1. Open **Senders** → **Gmail**.
+2. Turn on 2-Step Verification, then create an [App Password](https://myaccount.google.com/apppasswords).
+3. From = your Gmail address. Password = the 16-character App Password (spaces are stripped). Host is `smtp.gmail.com` (587 or 465).
+4. Verify, then Compose. Consumer Gmail is typically limited to about 500 messages per day.
 
 ### Mailgun, SendGrid, Postfix, AWS SES
 
