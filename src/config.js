@@ -15,6 +15,22 @@ export const config = {
   },
   globalRatePerMinute: parseInt(process.env.GLOBAL_RATE_PER_MINUTE || '60', 10),
   requireDoubleOptIn: bool(process.env.REQUIRE_DOUBLE_OPT_IN, true),
+  // Key used to encrypt stored mailbox app passwords. Defaults to JWT_SECRET so
+  // existing installs keep working, but should be set independently.
+  credentialKey: process.env.CREDENTIAL_KEY || process.env.JWT_SECRET || 'insecure-dev-secret-change-me',
+  verification: {
+    // HELO name and MAIL FROM used for SMTP recipient probes. Point these at a
+    // domain you control with matching forward/reverse DNS, otherwise many
+    // mail servers will refuse to answer.
+    heloName: process.env.VERIFY_HELO_NAME || 'localhost',
+    mailFrom: process.env.VERIFY_MAIL_FROM || '',
+    timeoutMs: parseInt(process.env.VERIFY_TIMEOUT_MS || '8000', 10),
+    concurrency: parseInt(process.env.VERIFY_CONCURRENCY || '5', 10),
+    // Skip the SMTP probe entirely (DNS-level checks only).
+    smtpProbe: bool(process.env.VERIFY_SMTP_PROBE, true),
+  },
+  // Optional Google Safe Browsing key for the link checker.
+  safeBrowsingKey: process.env.SAFE_BROWSING_API_KEY || '',
   systemSmtp: {
     host: process.env.SMTP_HOST || '',
     port: parseInt(process.env.SMTP_PORT || '587', 10),

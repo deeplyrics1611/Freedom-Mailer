@@ -55,3 +55,43 @@ export function renderTemplate(str, vars) {
     vars[k] === undefined || vars[k] === null ? '' : String(vars[k])
   );
 }
+
+const escapeHtml = (s) =>
+  String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/**
+ * Footer for cold outreach. Recipients here never opted in, so CAN-SPAM's
+ * requirements apply in full: say who you are, give a real postal address, and
+ * provide a working opt-out. Sending B2B outreach without these is unlawful in
+ * the US and, in the EU/UK, needs a legitimate-interest basis plus the same
+ * opt-out — so the footer is not optional and cannot be disabled.
+ */
+export function withOutreachFooter({ html, text }, { token, postalAddress = '', senderName = '' }) {
+  const link = unsubscribeUrl(token);
+  const who = senderName ? `${senderName} · ` : '';
+  const address = postalAddress.trim();
+
+  const footerHtml = `
+    <div style="border-top:1px solid #ddd;margin:28px 0 0;padding-top:12px;font-size:12px;color:#777;line-height:1.5">
+      <div>${escapeHtml(who)}You received this message because we are contacting businesses about a purchasing enquiry.</div>
+      ${address ? `<div style="margin-top:4px">${escapeHtml(address)}</div>` : ''}
+      <div style="margin-top:6px"><a href="${link}" style="color:#777">Unsubscribe</a> and we will not contact you again.</div>
+    </div>`;
+
+  const footerText = [
+    '',
+    '--',
+    `${who}You received this message because we are contacting businesses about a purchasing enquiry.`,
+    address,
+    `Unsubscribe: ${link}`,
+  ].filter(Boolean).join('\n');
+
+  return {
+    html: (html || '') + footerHtml,
+    text: (text || '') + `\n${footerText}`,
+    headers: {
+      'List-Unsubscribe': `<${link}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  };
+}

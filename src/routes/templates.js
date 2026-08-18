@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../auth.js';
+import { RFQ_TEMPLATES } from '../lib/starters.js';
 
 const router = Router();
 router.use(requireAuth);
+
+// Built-in quote-request copy to start from.
+router.get('/starters', (req, res) => res.json(RFQ_TEMPLATES));
 
 router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM templates WHERE user_id = ? ORDER BY id DESC').all(req.user.id));

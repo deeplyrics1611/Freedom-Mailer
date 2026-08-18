@@ -141,4 +141,184 @@ CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_subs_list ON subscriptions(list_id, status);
 `);
 
+// ---------------------------------------------------------------------------
+// Outreach schema: mailbox pool, leads, validation, deliverability checks.
+// ---------------------------------------------------------------------------
+db.exec(`
+-- A sending mailbox authenticated with an app password (Gmail/Workspace or any
+-- SMTP host). Several mailboxes form a pool that sends are spread across, so no
+-- single account exceeds its provider's daily/hourly limit. App passwords are
+-- stored encrypted (see lib/secrets.js).
+CREATE TABLE IF NOT EXISTS mailboxes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label         TEXT NOT NULL,
+  provider      TEXT NOT NULL DEFAULT 'gmail',   -- gmail | workspace | custom
+  host          TEXT NOT NULL DEFAULT 'smtp.gmail.com',
+  port          INTEGER NOT NULL DEFAULT 465,
+  secure        INTEGER NOT NULL DEFAULT 1,
+  email         TEXT NOT NULL,                   -- address + SMTP username
+  app_password  TEXT NOT NULL,                   -- encrypted at rest
+  from_name     TEXT NOT NULL DEFAULT '',
+  reply_to      TEXT NOT NULL DEFAULT '',
+  daily_limit   INTEGER NOT NULL DEFAULT 400,
+  hourly_limit  INTEGER NOT NULL DEFAULT 40,
+  min_gap_sec   INTEGER NOT NULL DEFAULT 45,     -- pacing between sends
+  warmup        INTEGER NOT NULL DEFAULT 1,      -- ramp volume on a new mailbox
+  warmup_start  INTEGER NOT NULL DEFAULT 10,
+  warmup_step   INTEGER NOT NULL DEFAULT 5,
+  active        INTEGER NOT NULL DEFAULT 1,
+  verified      INTEGER NOT NULL DEFAULT 0,
+  verified_at   TEXT,
+  last_error    TEXT NOT NULL DEFAULT '',
+  paused_until  TEXT,
+  last_send_at  TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, email)
+);
+
+-- Per-mailbox, per-hour send counters. Daily totals are summed from these.
+CREATE TABLE IF NOT EXISTS mailbox_usage (
+  mailbox_id  INTEGER NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+  day         TEXT NOT NULL,                     -- YYYY-MM-DD (UTC)
+  hour        INTEGER NOT NULL,                  -- 0-23 (UTC)
+  sent        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (mailbox_id, day, hour)
+);
+
+-- Cold-outreach audiences. Kept separate from opt-in \`lists\` because these
+-- recipients have not double opted in; outreach campaigns carry the stricter
+-- CAN-SPAM requirements (postal address + working opt-out) instead.
+CREATE TABLE IF NOT EXISTS lead_lists (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS leads (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  lead_list_id  INTEGER NOT NULL REFERENCES lead_lists(id) ON DELETE CASCADE,
+  email         TEXT NOT NULL,
+  fields        TEXT NOT NULL DEFAULT '{}',      -- JSON merge fields from CSV
+  status        TEXT NOT NULL DEFAULT 'unchecked', -- unchecked|valid|invalid|risky|catch_all|unknown
+  score         INTEGER,
+  reason        TEXT NOT NULL DEFAULT '',
+  detail        TEXT NOT NULL DEFAULT '{}',
+  checked_at    TEXT,
+  unsub_token   TEXT NOT NULL,
+  opted_out     INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(lead_list_id, email)
+);
+
+-- Bulk address-validation jobs, processed by the background worker.
+CREATE TABLE IF NOT EXISTS verification_jobs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL DEFAULT '',
+  lead_list_id  INTEGER REFERENCES lead_lists(id) ON DELETE SET NULL,
+  total         INTEGER NOT NULL DEFAULT 0,
+  processed     INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL DEFAULT 'queued',  -- queued|running|done|cancelled|failed
+  deep          INTEGER NOT NULL DEFAULT 1,      -- include SMTP mailbox probe
+  error         TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS verification_results (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id    INTEGER NOT NULL REFERENCES verification_jobs(id) ON DELETE CASCADE,
+  email     TEXT NOT NULL,
+  status    TEXT NOT NULL,
+  score     INTEGER NOT NULL DEFAULT 0,
+  reason    TEXT NOT NULL DEFAULT '',
+  detail    TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Addresses still awaiting processing inside a job.
+CREATE TABLE IF NOT EXISTS verification_queue (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id  INTEGER NOT NULL REFERENCES verification_jobs(id) ON DELETE CASCADE,
+  email   TEXT NOT NULL,
+  lead_id INTEGER
+);
+
+-- Cached per-domain facts so bulk runs don't re-query DNS/SMTP per address.
+CREATE TABLE IF NOT EXISTS domain_cache (
+  domain      TEXT PRIMARY KEY,
+  mx          TEXT NOT NULL DEFAULT '[]',
+  has_mx      INTEGER NOT NULL DEFAULT 0,
+  catch_all   INTEGER,                           -- NULL = not probed yet
+  checked_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Saved reports from the deliverability / link tooling.
+CREATE TABLE IF NOT EXISTS checks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,                      -- content | auth | headers | link
+  target     TEXT NOT NULL DEFAULT '',
+  score      INTEGER,
+  verdict    TEXT NOT NULL DEFAULT '',
+  report     TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Inbox-placement seed tests: send a tagged message to seed mailboxes you own,
+-- then record where each one landed.
+CREATE TABLE IF NOT EXISTS seed_tests (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code        TEXT NOT NULL UNIQUE,              -- tag embedded in the subject
+  mailbox_id  INTEGER REFERENCES mailboxes(id) ON DELETE SET NULL,
+  subject     TEXT NOT NULL DEFAULT '',
+  note        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS seed_results (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  seed_test_id INTEGER NOT NULL REFERENCES seed_tests(id) ON DELETE CASCADE,
+  email       TEXT NOT NULL,
+  provider    TEXT NOT NULL DEFAULT '',
+  send_status TEXT NOT NULL DEFAULT 'queued',    -- queued|sent|failed
+  send_error  TEXT NOT NULL DEFAULT '',
+  placement   TEXT NOT NULL DEFAULT 'unknown',   -- unknown|inbox|promotions|spam|missing
+  recorded_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_list ON leads(lead_list_id, status);
+CREATE INDEX IF NOT EXISTS idx_usage_day ON mailbox_usage(mailbox_id, day);
+CREATE INDEX IF NOT EXISTS idx_vqueue_job ON verification_queue(job_id);
+CREATE INDEX IF NOT EXISTS idx_vresults_job ON verification_results(job_id);
+`);
+
+// Idempotent column additions for tables that predate the outreach features.
+function addColumn(table, column, ddl) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+
+addColumn('campaigns', 'mode', "TEXT NOT NULL DEFAULT 'optin'"); // optin | outreach
+addColumn('campaigns', 'lead_list_id', 'INTEGER REFERENCES lead_lists(id) ON DELETE SET NULL');
+addColumn('campaigns', 'use_pool', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('campaigns', 'postal_address', "TEXT NOT NULL DEFAULT ''");
+addColumn('campaigns', 'reply_to', "TEXT NOT NULL DEFAULT ''");
+addColumn('campaigns', 'min_delay_sec', 'INTEGER NOT NULL DEFAULT 45');
+addColumn('campaigns', 'max_delay_sec', 'INTEGER NOT NULL DEFAULT 120');
+addColumn('campaigns', 'daily_cap', 'INTEGER NOT NULL DEFAULT 0'); // 0 = mailbox caps only
+addColumn('campaigns', 'only_valid', 'INTEGER NOT NULL DEFAULT 1');
+
+addColumn('messages', 'mailbox_id', 'INTEGER');
+addColumn('messages', 'use_pool', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('messages', 'lead_id', 'INTEGER');
+addColumn('messages', 'seed_result_id', 'INTEGER');
+addColumn('messages', 'not_before', 'TEXT');
+addColumn('messages', 'reply_to', "TEXT NOT NULL DEFAULT ''");
+
 export default db;

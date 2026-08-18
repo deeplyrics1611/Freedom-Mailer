@@ -27,29 +27,48 @@ router.get('/c/:token', (req, res) => {
   res.send(page('Subscription confirmed', 'Thanks! Your subscription is now confirmed.'));
 });
 
-// GET /u/:token — one-click unsubscribe.
+// GET /u/:token — one-click unsubscribe. The token identifies either an opt-in
+// subscription or a cold-outreach lead; both must work.
 router.get('/u/:token', (req, res) => {
-  const sub = db.prepare('SELECT * FROM subscriptions WHERE token = ?').get(req.params.token);
-  if (!sub) return res.status(404).send(page('Link not found', 'This unsubscribe link is invalid.'));
-  handleUnsubscribe(sub);
+  if (!handleUnsubscribe(req.params.token)) {
+    return res.status(404).send(page('Link not found', 'This unsubscribe link is invalid.'));
+  }
   res.send(page('Unsubscribed', 'You have been unsubscribed and will no longer receive these emails.'));
 });
 
 // POST /u/:token — RFC 8058 one-click (List-Unsubscribe-Post).
 router.post('/u/:token', (req, res) => {
-  const sub = db.prepare('SELECT * FROM subscriptions WHERE token = ?').get(req.params.token);
-  if (!sub) return res.status(404).json({ error: 'not found' });
-  handleUnsubscribe(sub);
+  if (!handleUnsubscribe(req.params.token)) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
 });
 
-function handleUnsubscribe(sub) {
-  db.prepare(
-    "UPDATE subscriptions SET status = 'unsubscribed', unsubscribed_at = datetime('now') WHERE id = ?"
-  ).run(sub.id);
-  // Add to the owner's suppression list so future campaigns skip them too.
-  const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(sub.contact_id);
-  if (contact) suppress(contact.user_id, contact.email, 'unsubscribe');
+function handleUnsubscribe(token) {
+  const sub = db.prepare('SELECT * FROM subscriptions WHERE token = ?').get(token);
+  if (sub) {
+    db.prepare(
+      "UPDATE subscriptions SET status = 'unsubscribed', unsubscribed_at = datetime('now') WHERE id = ?"
+    ).run(sub.id);
+    // Add to the owner's suppression list so future campaigns skip them too.
+    const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(sub.contact_id);
+    if (contact) suppress(contact.user_id, contact.email, 'unsubscribe');
+    return true;
+  }
+
+  const lead = db.prepare('SELECT * FROM leads WHERE unsub_token = ?').get(token);
+  if (lead) {
+    db.prepare('UPDATE leads SET opted_out = 1 WHERE id = ?').run(lead.id);
+    // Suppress account-wide, not just for this list: an opt-out means "stop
+    // contacting me", not "stop contacting me from this one audience".
+    suppress(lead.user_id, lead.email, 'unsubscribe');
+    // Drop anything already queued for them.
+    db.prepare(
+      `UPDATE messages SET status = 'skipped', error = 'recipient opted out'
+       WHERE user_id = ? AND to_address = ? AND status = 'queued'`
+    ).run(lead.user_id, lead.email);
+    return true;
+  }
+
+  return false;
 }
 
 export default router;
