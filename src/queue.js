@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { db } from './db.js';
 import { sendEmail } from './mailer.js';
-import { sendSms } from './sms.js';
+import { sendSms, systemProvider } from './sms.js';
 import { isSuppressed, suppress } from './compliance.js';
 import { pickGmailSender, markSenderUsed } from './rotate.js';
 
@@ -40,7 +40,11 @@ async function processMessage(msg) {
 
   try {
     if (msg.channel === 'sms') {
-      await sendSms({ to: msg.to_address, body: msg.text || msg.subject || '' });
+      const provider = msg.sms_provider_id
+        ? db.prepare('SELECT * FROM sms_providers WHERE id = ?').get(msg.sms_provider_id)
+        : systemProvider();
+      if (!provider) throw new Error('SMS provider missing');
+      await sendSms({ to: msg.to_address, body: msg.text || msg.subject || '', provider });
     } else {
       let sender = msg.sender_id
         ? db.prepare('SELECT * FROM senders WHERE id = ?').get(msg.sender_id)

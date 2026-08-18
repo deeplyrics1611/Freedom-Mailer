@@ -41,6 +41,7 @@ $('logout').addEventListener('click', logout);
 const NAV = [
   ['dashboard', 'Dashboard'],
   ['gmail', 'Gmail pool'],
+  ['sms', 'SMS'],
   ['campaigns', 'RFQ campaigns'],
   ['lists', 'Lists'],
   ['contacts', 'Contacts'],
@@ -123,8 +124,9 @@ views.dashboard = async () => {
   const s = await api('/api/stats');
   const card = (n, label) => `<div class="card"><div class="stat">${n}</div><div class="stat-label">${label}</div></div>`;
   $('d-cards').innerHTML = [
-    card(s.gmail_ready, 'Gmail accounts ready'), card(s.contacts, 'Contacts'),
-    card(s.confirmed, 'Confirmed on lists'), card(s.campaigns, 'Campaigns'),
+    card(s.gmail_ready, 'Gmail accounts ready'), card(s.sms_providers ?? (s.sms_enabled ? 1 : 0), 'SMS providers'),
+    card(s.contacts, 'Contacts'), card(s.confirmed, 'Confirmed on lists'),
+    card(s.campaigns, 'Campaigns'), card(s.sms_sent || 0, 'SMS sent'),
     card(s.sent, 'Messages sent'), card(s.queued, 'In queue'),
     card(s.failed, 'Failed'), card(s.suppressed, 'Suppressed'),
   ].join('');
@@ -206,6 +208,151 @@ views.gmail = async () => {
     if (!confirm('Remove this Gmail identity?')) return;
     await api(`/api/gmail/${b.dataset.d}`, { method: 'DELETE' }); views.gmail();
   }));
+};
+
+views.sms = async () => {
+  const data = await api('/api/sms/providers');
+  const lists = await api('/api/lists');
+  const catalog = data.catalog || [];
+  const fieldHtml = (fields) => (fields || []).map((f) => {
+    const ta = f.name === 'body_template';
+    return `<div class="field ${ta ? 'full' : ''}"><label>${esc(f.label)}</label>${
+      ta
+        ? `<textarea name="${esc(f.name)}" rows="3" placeholder="${esc(f.placeholder || '')}"></textarea>`
+        : `<input name="${esc(f.name)}" type="${f.type === 'password' ? 'password' : 'text'}" placeholder="${esc(f.placeholder || '')}" autocomplete="off">`
+    }</div>`;
+  }).join('');
+
+  view(`<div class="page-head"><h1>SMS</h1></div>
+    <p class="sub">Send texts through <b>Twilio</b> (<span class="mono">TWILIO_ACCOUNT_SID</span> / <span class="mono">TWILIO_AUTH_TOKEN</span>) or another gateway. Add providers here, or set env vars on the server.</p>
+    ${data.system ? `<div class="notice">System provider from .env: <b>${esc(data.system.label)}</b> · from ${esc(data.system.from_number || '—')}</div>` : '<div class="notice">No .env Twilio/Vonage yet. Add a provider below (Twilio Account SID + Auth Token is the usual setup).</div>'}
+    <h2>Providers</h2>
+    <form id="sms-prov-form" class="form-grid">
+      <div class="field"><label>Gateway</label>
+        <select name="provider" id="sms-kind">
+          ${catalog.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Label</label><input name="label" placeholder="RFQ SMS"></div>
+      <div id="sms-fields" class="full form-grid"></div>
+      <p class="help full" id="sms-hint"></p>
+      <div class="actions full"><button type="submit">Add &amp; verify</button></div>
+    </form>
+    <table id="sms-prov-table"></table>
+    <h2>Send one SMS</h2>
+    <form id="sms-send-form" class="form-grid">
+      <div class="field"><label>Provider</label><select name="provider_id" id="sms-prov-sel"></select></div>
+      <div class="field"><label>To (E.164)</label><input name="to" required placeholder="+15551234567"></div>
+      <div class="field full"><label>Message</label><textarea name="body" id="sms-body" rows="4" placeholder="Hi {{first_name}}, requesting a quote for {{rfq_item}}…"></textarea>
+        <div class="muted small" id="sms-seg"></div></div>
+      <div class="actions full"><button type="submit">Queue SMS</button></div>
+    </form>
+    <h2>Send to a list</h2>
+    <p class="help">Contacts need a phone number. Placeholders work the same as email. A STOP opt-out line is appended.</p>
+    ${placeholderChips(['first_name', 'company', 'rfq_item', 'sender_name'])}
+    <form id="sms-camp-form" class="form-grid">
+      <div class="field"><label>Name</label><input name="name" placeholder="RFQ SMS blast"></div>
+      <div class="field"><label>List</label><select name="list_id" required>
+        <option value="">— choose —</option>
+        ${lists.map((l) => `<option value="${l.id}">${esc(l.name)} (${l.confirmed} confirmed)</option>`).join('')}
+      </select></div>
+      <div class="field"><label>Provider</label><select name="provider_id" class="sms-prov-copy"></select></div>
+      <div class="field"><label>Who</label>
+        <select name="send_to"><option value="confirmed">Confirmed only</option><option value="all_in_list">All on list except unsubscribed</option></select></div>
+      <div class="field full"><label>Message</label><textarea name="body" rows="4" required></textarea></div>
+      <div class="actions full"><button type="submit">Queue to list</button></div>
+    </form>
+    <h2>API</h2>
+    <pre>curl -X POST ${location.origin}/api/v1/sms \\
+  -H "X-API-Key: YOUR_KEY" -H "Content-Type: application/json" \\
+  -d '{"to":"+15551234567","body":"Quote request from Your Company"}'</pre>
+    <h2>Recent SMS</h2>
+    <table id="sms-log"></table>`);
+
+  const kind = $('sms-kind');
+  const paintFields = () => {
+    const p = catalog.find((x) => x.id === kind.value) || catalog[0];
+    $('sms-fields').innerHTML = fieldHtml(p?.fields);
+    $('sms-hint').textContent = p?.hint || '';
+  };
+  paintFields();
+  kind.addEventListener('change', paintFields);
+
+  const provOptions = () => {
+    const rows = (data.providers || []).filter((p) => p.verified && p.active);
+    const sys = data.system ? `<option value="">${esc(data.system.label)}</option>` : '<option value="">— default —</option>';
+    return sys + rows.map((p) => `<option value="${p.id}">${esc(p.label)} (${esc(p.provider)})</option>`).join('');
+  };
+  $('sms-prov-sel').innerHTML = provOptions();
+  $('view').querySelectorAll('.sms-prov-copy').forEach((s) => { s.innerHTML = provOptions(); });
+
+  $('sms-prov-table').innerHTML = `<tr><th>Label</th><th>Gateway</th><th>From</th><th>Status</th><th></th></tr>` +
+    ((data.providers || []).map((p) => `<tr>
+      <td>${esc(p.label)}</td><td>${esc(p.provider)}</td>
+      <td class="mono small">${esc(p.from_number || p.extra?.messaging_service_sid || '—')}</td>
+      <td>${p.verified ? badge('verified') : badge('pending')}</td>
+      <td><button class="tiny secondary" data-v="${p.id}">Verify</button>
+          <button class="tiny danger" data-d="${p.id}">Delete</button></td></tr>`).join('')
+      || `<tr><td colspan="5" class="muted">No panel providers yet — add Twilio or another gateway, or use .env.</td></tr>`);
+
+  $('sms-prov-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = formBody(e.target);
+    b.verify = true;
+    try {
+      const r = await api('/api/sms/providers', { method: 'POST', body: b });
+      toast(r.verified ? 'Provider verified' : (r.warning || 'Saved'));
+      views.sms();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  $('sms-prov-table').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', async () => {
+    try { await api(`/api/sms/providers/${b.dataset.v}/verify`, { method: 'POST' }); toast('Verified'); views.sms(); }
+    catch (err) { toast(err.message, 'err'); }
+  }));
+  $('sms-prov-table').querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Remove this SMS provider?')) return;
+    await api(`/api/sms/providers/${b.dataset.d}`, { method: 'DELETE' }); views.sms();
+  }));
+
+  const seg = () => {
+    const t = $('sms-body')?.value || '';
+    const uni = /[^\x00-\x7F]/.test(t);
+    const n = [...t].length;
+    const segs = n === 0 ? 0 : n <= (uni ? 70 : 160) ? 1 : Math.ceil(n / (uni ? 67 : 153));
+    $('sms-seg').textContent = `${n} chars · ${segs} segment${segs === 1 ? '' : 's'}${uni ? ' · Unicode' : ''}`;
+  };
+  $('sms-body')?.addEventListener('input', seg); seg();
+
+  $('sms-send-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = formBody(e.target);
+    b.provider_id = b.provider_id || null;
+    try {
+      const r = await api('/api/sms/send', { method: 'POST', body: b });
+      toast(`Queued to ${r.to}`); views.sms();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  trackFocus($('sms-camp-form'));
+  $('view').querySelectorAll('[data-ph]').forEach((b) => b.addEventListener('click', () => insertPlaceholder(b.dataset.ph)));
+  $('sms-camp-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!confirm('Queue SMS to this list? Confirm you have consent or another lawful basis (TCPA / local rules).')) return;
+    const b = formBody(e.target);
+    b.list_id = parseInt(b.list_id, 10);
+    b.provider_id = b.provider_id || null;
+    b.lawful_basis = true;
+    try {
+      const r = await api('/api/sms/campaign', { method: 'POST', body: b });
+      toast(`Queued ${r.queued} · skipped ${r.skipped}`); views.sms();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+
+  const log = await api('/api/sms/messages');
+  $('sms-log').innerHTML = `<tr><th>To</th><th>Body</th><th>Status</th><th>When</th></tr>` +
+    (log.map((m) => `<tr><td class="mono">${esc(m.to_address)}</td>
+      <td class="small">${esc((m.text || '').slice(0, 120))}${m.error ? `<div class="muted">${esc(m.error)}</div>` : ''}</td>
+      <td>${badge(m.status)}</td>
+      <td class="muted small">${esc((m.sent_at || m.created_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`).join('')
+      || `<tr><td colspan="4" class="muted">No SMS yet.</td></tr>`);
 };
 
 views.campaigns = async () => {
@@ -510,6 +657,7 @@ async function openList(id, lists) {
     <form id="sub-form" class="row">
       <div class="field"><label>Email</label><input name="email" type="email" required></div>
       <div class="field"><label>First name</label><input name="first_name"></div>
+      <div class="field"><label>Phone</label><input name="phone" placeholder="+15551234567"></div>
       <div class="field"><label>Company</label><input name="company"></div>
       <label class="field small"><span>&nbsp;</span><label><input type="checkbox" name="preConfirmed" style="width:auto"> Recorded consent / B2B lead</label></label>
       <button type="submit">Add subscriber</button>
@@ -519,7 +667,8 @@ async function openList(id, lists) {
     e.preventDefault();
     const fd = new FormData(e.target);
     const b = {
-      email: fd.get('email'), first_name: fd.get('first_name') || '', company: fd.get('company') || '',
+      email: fd.get('email'), first_name: fd.get('first_name') || '', phone: fd.get('phone') || '',
+      company: fd.get('company') || '',
       preConfirmed: fd.get('preConfirmed') === 'on',
     };
     try {
@@ -688,7 +837,11 @@ views.apikeys = async () => {
     <p class="sub">Use these with the transactional API. Send with header <code>X-API-Key: &lt;key&gt;</code>.</p>
     <pre>curl -X POST ${location.origin}/api/v1/email \\
   -H "X-API-Key: YOUR_KEY" -H "Content-Type: application/json" \\
-  -d '{"to":"user@example.com","subject":"Hi","html":"&lt;p&gt;Hello&lt;/p&gt;"}'</pre>
+  -d '{"to":"user@example.com","subject":"Hi","html":"&lt;p&gt;Hello&lt;/p&gt;"}'
+
+curl -X POST ${location.origin}/api/v1/sms \\
+  -H "X-API-Key: YOUR_KEY" -H "Content-Type: application/json" \\
+  -d '{"to":"+15551234567","body":"Quote request","provider_id":null}'</pre>
     <form id="key-form" class="row">
       <div class="field"><label>Key name</label><input name="name" required placeholder="Production app"></div>
       <button type="submit">Create key</button>

@@ -14,6 +14,7 @@ This is for mailboxes **you control**. Gmail’s consumer terms are not a bulk E
 - **Link check** — flags shorteners, IP hosts, risky TLDs, redirect chains, dead links — the usual cold-mail landmines.
 - **Lead validation** — Debounce-style scoring: syntax, typos, disposable domains, role accounts, **MX**. Optional SMTP `RCPT TO` probe if outbound port 25 is open. Corporate MX with no risk flags scores **99**.
 - **CSV import** — `email,first_name,last_name,company,title,phone`. Undeliverable leads are skipped at send time.
+- **SMS** — Twilio (`TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`) plus Vonage, MessageBird, Plivo, Telnyx, Infobip, ClickSend, Sinch, Twilio-compatible APIs, or a custom HTTPS webhook. Panel + `POST /api/v1/sms`.
 
 ## Quick start
 
@@ -55,7 +56,7 @@ See `.env.example`. Notable:
 | `APP_BASE_URL` | Public URL for unsubscribe/confirm links |
 | `JWT_SECRET` | Session + secret-encryption key |
 | `GLOBAL_RATE_PER_MINUTE` | Worker send-rate cap |
-| `REQUIRE_DOUBLE_OPT_IN` | When true, “confirmed only” campaigns skip pending leads |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | Default Twilio SMS (or add providers in the SMS panel) |
 
 ## Tests
 
@@ -77,7 +78,8 @@ src/
   linkcheck.js      Cold-mail URL review
   inbox.js          Placement estimate + IMAP probe
   validate.js       MX / disposable / role scoring
-  rfqTemplates.js   RFQ starters
+  sms.js            Multi-provider SMS (Twilio, Vonage, …)
+  routes/sms.js     SMS panel + list sends
   queue.js          Rate-limited sender
   routes/gmail.js   Pool CRUD
   routes/tools.js   Preview, spam, links, validate

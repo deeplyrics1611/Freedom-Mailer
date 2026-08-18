@@ -2,7 +2,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { config, smsEnabled } from './config.js';
+import { config } from './config.js';
 import { db } from './db.js';
 import { hashPassword, requireAuth } from './auth.js';
 import { startWorker } from './queue.js';
@@ -19,6 +19,8 @@ import messagingRoutes from './routes/messaging.js';
 import publicRoutes from './routes/public.js';
 import gmailRoutes from './routes/gmail.js';
 import toolsRoutes from './routes/tools.js';
+import smsRoutes from './routes/sms.js';
+import { smsEnabled } from './sms.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -66,7 +68,13 @@ app.get('/api/stats', requireAuth, (req, res) => {
     gmail_ready: db.prepare(
       `SELECT COUNT(*) n FROM senders WHERE user_id = ? AND kind='gmail' AND verified=1 AND active=1 AND in_rotation=1`
     ).get(uid).n,
-    sms_enabled: smsEnabled(),
+    sms_providers: db.prepare(
+      `SELECT COUNT(*) n FROM sms_providers WHERE user_id = ? AND verified=1 AND active=1`
+    ).get(uid).n,
+    sms_sent: one("SELECT COUNT(*) n FROM messages WHERE user_id = ? AND channel='sms' AND status='sent'"),
+    sms_enabled: smsEnabled() || db.prepare(
+      `SELECT COUNT(*) n FROM sms_providers WHERE user_id = ? AND verified=1`
+    ).get(uid).n > 0,
   });
 });
 
@@ -92,6 +100,7 @@ app.use('/api/templates', templateRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/tools', toolsRoutes);
+app.use('/api/sms', smsRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

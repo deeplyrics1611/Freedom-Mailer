@@ -189,4 +189,24 @@ addColumn('users', 'company_name', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'physical_address', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'sender_title', "TEXT NOT NULL DEFAULT ''");
 
+addColumn('messages', 'sms_provider_id', 'INTEGER');
+addColumn('campaigns', 'channel', "TEXT NOT NULL DEFAULT 'email'");
+addColumn('campaigns', 'sms_provider_id', 'INTEGER');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS sms_providers (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider    TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  api_key     TEXT NOT NULL DEFAULT '',
+  api_secret  TEXT NOT NULL DEFAULT '',
+  from_number TEXT NOT NULL DEFAULT '',
+  extra_json  TEXT NOT NULL DEFAULT '{}',
+  verified    INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
 export default db;

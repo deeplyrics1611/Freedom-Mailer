@@ -28,8 +28,11 @@ export const config = {
     accountSid: process.env.TWILIO_ACCOUNT_SID || '',
     authToken: process.env.TWILIO_AUTH_TOKEN || '',
     fromNumber: process.env.TWILIO_FROM_NUMBER || '',
+    messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID || '',
+  },
+  vonage: {
+    apiKey: process.env.VONAGE_API_KEY || '',
+    apiSecret: process.env.VONAGE_API_SECRET || '',
+    from: process.env.VONAGE_FROM || '',
   },
 };
-
-export const smsEnabled = () =>
-  !!(config.twilio.accountSid && config.twilio.authToken && config.twilio.fromNumber);

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { requireApiKey } from '../auth.js';
 import { isSuppressed } from '../compliance.js';
-import { smsEnabled } from '../config.js';
+import { smsEnabled, systemProvider, normalizePhone, withSmsOptOut } from '../sms.js';
+import { resolveSmsProvider } from './sms.js';
 
 // Transactional sending API. Authenticated with X-API-Key.
 // Transactional mail (password resets, receipts, etc.) is one-to-one and
@@ -52,21 +53,33 @@ router.post('/email', (req, res) => {
   res.status(202).json({ id: info.lastInsertRowid, status: 'queued' });
 });
 
-// POST /api/v1/sms  { to, body }
+// POST /api/v1/sms  { to, body, provider_id? }
 router.post('/sms', (req, res) => {
-  if (!smsEnabled()) return res.status(503).json({ error: 'SMS is not configured on this server' });
-  const { to, body } = req.body || {};
+  const { to, body, provider_id, opt_out = true } = req.body || {};
   if (!to || !body) return res.status(400).json({ error: 'to and body are required' });
   if (!checkDailyQuota(req.user.id, req.user.daily_quota)) {
     return res.status(429).json({ error: 'Daily quota exceeded' });
   }
+  const dest = normalizePhone(to);
+  if (!dest) return res.status(400).json({ error: 'Invalid phone number (use E.164, e.g. +15551234567)' });
+  if (isSuppressed(req.user.id, dest)) {
+    return res.status(403).json({ error: 'Recipient is on your suppression list' });
+  }
+  const provider = resolveSmsProvider(req.user.id, provider_id);
+  if (!provider && !smsEnabled() && !systemProvider()) {
+    return res.status(503).json({ error: 'SMS is not configured — add a provider in the SMS section or set TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN' });
+  }
+  if (!provider) {
+    return res.status(503).json({ error: 'SMS is not configured on this server' });
+  }
+  const text = opt_out ? withSmsOptOut(body) : String(body);
   const info = db
     .prepare(
-      `INSERT INTO messages (user_id, channel, to_address, text, status, source)
-       VALUES (?, 'sms', ?, ?, 'queued', 'api')`
+      `INSERT INTO messages (user_id, channel, to_address, text, status, source, sms_provider_id)
+       VALUES (?, 'sms', ?, ?, 'queued', 'api', ?)`
     )
-    .run(req.user.id, String(to), body);
-  res.status(202).json({ id: info.lastInsertRowid, status: 'queued' });
+    .run(req.user.id, dest, text, provider.id || null);
+  res.status(202).json({ id: info.lastInsertRowid, status: 'queued', to: dest });
 });
 
 // GET /api/v1/messages/:id  — delivery status lookup

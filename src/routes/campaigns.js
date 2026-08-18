@@ -25,7 +25,7 @@ router.get('/', (req, res) => {
        FROM campaigns c
        LEFT JOIN lists l ON l.id = c.list_id
        LEFT JOIN senders s ON s.id = c.sender_id
-       WHERE c.user_id = ? ORDER BY c.id DESC`
+       WHERE c.user_id = ? AND COALESCE(c.channel, 'email') != 'sms' ORDER BY c.id DESC`
     )
     .all(req.user.id);
   res.json(rows);
