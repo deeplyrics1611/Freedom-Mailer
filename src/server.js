@@ -17,6 +17,7 @@ import templateRoutes from './routes/templates.js';
 import campaignRoutes from './routes/campaigns.js';
 import messagingRoutes from './routes/messaging.js';
 import publicRoutes from './routes/public.js';
+import toolsRoutes from './routes/tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -41,6 +42,10 @@ bootstrapAdmin();
 // Rate limit auth + API endpoints.
 const authLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false });
 const apiLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
+// Deliverability/link/lead tools make outbound DNS + HTTP calls per request,
+// so they get a tighter cap to avoid this panel being used to hammer third
+// parties (or its own egress) via scripted requests.
+const toolsLimiter = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false });
 
 app.get('/health', (req, res) => res.json({ ok: true, sms: smsEnabled() }));
 
@@ -84,6 +89,7 @@ app.use('/api/lists', listRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/campaigns', campaignRoutes);
+app.use('/api/tools', toolsLimiter, toolsRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

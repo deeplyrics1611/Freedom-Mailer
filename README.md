@@ -15,14 +15,21 @@ own.
 ## Features
 
 - **Admin & user panel** — role-based (admin/user), per-user daily quotas, account management.
-- **Sender identities (SMTP)** — add credentials for a mailbox/domain you own; each must pass a live `verify()` before it can send.
+- **Sender identities (SMTP / Gmail app passwords)** — add as many mailbox credentials as you like (e.g. several Gmail accounts with their own [App Passwords](https://myaccount.google.com/apppasswords)); each must pass a live `verify()` before it can send, and you pick one per campaign.
 - **Transactional API** — `POST /api/v1/email` and `/api/v1/sms`, authenticated with per-user API keys.
 - **Lists with double opt-in** — subscribers are `pending` until they click a confirmation link; only `confirmed` recipients receive campaigns.
 - **One-click unsubscribe** — every campaign email carries an unsubscribe footer and RFC 8058 `List-Unsubscribe` header; unsubscribes auto-add to suppression.
 - **Suppression list** — unsubscribes, complaints and hard bounces are skipped on every send.
 - **Templates & campaigns** — `{{name}}`/`{{email}}` merge fields, draft → queue → send.
 - **Background queue** — rate-limited worker with retries and delivery logging.
+- **Deliverability / spam-content checker** — scores subject + HTML against classic content-filter heuristics (spam-trigger phrases, ALL-CAPS/`!!!` subjects, hidden text, mismatched link text, text/HTML ratio) and checks the sending domain's SPF, DMARC, and Spamhaus DBL blocklist status.
+- **Cold-mail link checker** — flags URL shorteners, non-HTTPS links, unresolvable domains, long redirect chains, and DNSBL-blacklisted destinations before you put a link in front of a cold prospect.
+- **Lead / list validator** — debounce/ZeroBounce-style hygiene check: syntax, MX/mail-server records, disposable-domain detection, role-based address detection, and common-domain typo suggestions (e.g. `gmial.com` → `gmail.com`), plus an opt-in best-effort live SMTP mailbox probe.
 - **SMS channel** — optional, via a Twilio-compatible gateway with consent expected upstream.
+
+### On sender rotation
+
+This platform deliberately does **not** auto-rotate across multiple sender identities (App Passwords/mailboxes) to push more volume than a single account's own sending limits allow. Using many mailboxes specifically to bypass a provider's per-account caps or spam controls violates Gmail's/Google Workspace's terms and is the same mechanism spam and phishing operations rely on. You can still add unlimited sender identities and choose which verified one to use per campaign — each just sends within its own limits, verified and logged independently.
 
 ## Quick start
 
@@ -59,6 +66,16 @@ All settings live in `.env` (see `.env.example`). Key ones:
 4. The worker enqueues one message per confirmed, non-suppressed subscriber,
    injects the unsubscribe footer/header, and delivers at the configured rate.
 
+## Deliverability, link, and lead-hygiene tools
+
+Three panel sections help you keep sending reputation healthy, independent of any single campaign:
+
+- **Deliverability check** (`POST /api/tools/deliverability`) — paste a subject/HTML/text and (optionally) your sending domain. Returns a 0-100 content score with itemized issues, plus SPF/DMARC/DBL status for the domain. This is a heuristic estimate of spam-filter risk, **not** a real inbox-placement test — for an actual seed-list test across Gmail/Outlook/Yahoo, run the same message through a dedicated service (e.g. Mail-Tester, GlockApps) in addition to this check.
+- **Link checker** (`POST /api/tools/links`) — paste HTML/text or a list of URLs; each is checked for shortener usage, HTTPS, DNS resolution, redirect-chain length, and Spamhaus DBL status. Outbound requests are restricted to public hosts (private/internal/metadata addresses are blocked) to keep the checker itself safe to run.
+- **Lead validator** (`POST /api/tools/validate-emails`) — paste or upload a list of addresses to get syntax, MX, disposable-domain, role-based, and typo checks, with an optional best-effort live SMTP probe. Outbound port 25 is blocked on many networks (including most cloud/CI egress), so the live probe degrades gracefully to the MX-based verdict when it can't complete — treat it as a bonus signal, not a guarantee, the same way any third-party verifier (Debounce, ZeroBounce, etc.) has to.
+
+All three are rate-limited (20 requests/minute/IP) since they make outbound DNS/HTTP calls on your behalf.
+
 ## Transactional API
 
 ```bash
@@ -94,8 +111,12 @@ src/
   mailer.js        Nodemailer transports + SMTP verify
   sms.js           Twilio-compatible SMS sender
   queue.js         Background worker (rate limit, retries, bounce auto-suppress)
+  netutils.js      HTML/link parsing, SSRF-safe fetch guard, DNSBL lookups, concurrency pool
+  deliverability.js  Content spam-heuristic scoring + SPF/DMARC/DBL domain checks
+  linkcheck.js     Cold-mail link safety checks (shorteners, redirects, DBL)
+  validator.js     Debounce-style email/lead validation (syntax, MX, disposable, typo, SMTP probe)
   routes/          auth, users, apikeys, senders, lists, contacts, templates,
-                   campaigns, messaging (API), public (confirm/unsubscribe)
+                   campaigns, messaging (API), public (confirm/unsubscribe), tools (deliverability/links/validate)
 public/            Static admin panel (vanilla SPA)
 ```
 

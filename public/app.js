@@ -49,6 +49,9 @@ const NAV = [
   ['templates', '📝 Templates'],
   ['campaigns', '🚀 Campaigns'],
   ['messages', '📨 Message log'],
+  ['deliverability', '🛡️ Deliverability check'],
+  ['linkcheck', '🔗 Link checker'],
+  ['validate', '✅ Lead validator'],
   ['apikeys', '🔑 API keys'],
   ['account', '⚙️ Account'],
 ];
@@ -97,25 +100,43 @@ views.dashboard = async () => {
 
 views.senders = async () => {
   view(`<div class="page-head"><h1>Sender identities</h1></div>
-    <p class="sub">Add SMTP credentials for a mailbox or domain <b>you own</b>. Each identity must be verified before it can send.</p>
-    <div class="notice">Use real credentials from your own mail provider. Set up SPF, DKIM and DMARC on the sending domain for good deliverability.</div>
+    <p class="sub">Add SMTP credentials for a mailbox or domain <b>you own</b>. Each identity must be verified before it can send. You can add as many identities as you like (multiple Gmail accounts, each with its own app password).</p>
+    <div class="notice">
+      <b>Using Gmail?</b> Click "Use Gmail preset", then sign in to the Gmail account, turn on
+      2-Step Verification, open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">Google Account → App passwords</a>,
+      create one, and paste it as the password below (username = the full @gmail.com address).
+      <br><br>
+      <b>On rotating senders to increase volume:</b> this panel intentionally does <u>not</u> auto-rotate
+      across your sender identities to push more mail than a single account's own limits allow. Using many
+      mailboxes to bypass Gmail's per-account sending caps or spam controls is against Google's terms and is
+      the same mechanism spam operations use. Each identity here sends within its own quota/limits and must be
+      individually verified — pick one per campaign below, or use several campaigns/mailboxes you actually own
+      and monitor separately.
+    </div>
     <form id="sender-form" class="form-grid">
-      <div class="field"><label>Label</label><input name="label" required placeholder="Marketing mailbox"></div>
-      <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="hello@yourdomain.com"></div>
+      <div class="field full"><button type="button" id="gmail-preset" class="secondary tiny">Use Gmail preset (smtp.gmail.com)</button></div>
+      <div class="field"><label>Label</label><input name="label" required placeholder="Sales mailbox #1"></div>
+      <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="you@yourdomain.com"></div>
       <div class="field"><label>From name</label><input name="from_name" placeholder="Your Company"></div>
       <div class="field"><label>SMTP host</label><input name="host" required placeholder="smtp.yourprovider.com"></div>
       <div class="field"><label>Port</label><input name="port" type="number" value="587"></div>
       <div class="field"><label>Secure (TLS on connect)</label><select name="secure"><option value="false">No (STARTTLS)</option><option value="true">Yes (465)</option></select></div>
-      <div class="field"><label>Username</label><input name="username" required></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required></div>
+      <div class="field"><label>Username</label><input name="username" required placeholder="you@gmail.com"></div>
+      <div class="field"><label>Password / App password</label><input name="password" type="password" required placeholder="16-character app password"></div>
       <div class="actions full"><button type="submit">Add identity</button></div>
     </form>
     <table id="sender-table"></table>`);
+  $('gmail-preset').addEventListener('click', () => {
+    const f = $('sender-form');
+    f.host.value = 'smtp.gmail.com'; f.port.value = 587; f.secure.value = 'false';
+    if (!f.label.value) f.label.value = 'Gmail mailbox';
+    f.username.focus();
+  });
   $('sender-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = e.target; const b = Object.fromEntries(new FormData(f));
     b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10);
-    try { await api('/api/senders', { method: 'POST', body: b }); f.reset(); toast('Identity added'); views.senders(); }
+    try { await api('/api/senders', { method: 'POST', body: b }); f.reset(); toast('Identity added — click Verify to confirm it can send'); views.senders(); }
     catch (err) { toast(err.message, 'err'); }
   });
   const rows = await api('/api/senders');
@@ -320,6 +341,143 @@ views.messages = async () => {
       <td>${esc(m.subject || '')}${m.error ? `<div class="muted small">${esc(m.error)}</div>` : ''}</td>
       <td>${badge(m.status)}</td><td class="muted small">${esc((m.sent_at || m.created_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`).join('')
       || `<tr><td colspan="5" class="muted">No messages yet.</td></tr>`);
+};
+
+function scoreColor(score) {
+  if (score >= 85) return 'ok';
+  if (score >= 65) return 'warn';
+  return 'err';
+}
+const severityBadge = (sev) => ({ error: 'err', warn: 'warn', info: 'muted' }[sev] || 'muted');
+const verdictBadge = (v) => ({ safe: 'ok', valid: 'ok', caution: 'warn', risky: 'err', invalid: 'muted', disposable: 'err' }[v] || 'muted');
+
+views.deliverability = async () => {
+  view(`<div class="page-head"><h1>Deliverability &amp; spam-filter check</h1></div>
+    <p class="sub">Scores your subject/HTML against the same kind of content heuristics real spam filters use, and (optionally) checks your sending domain's SPF/DMARC/blocklist status.</p>
+    <div class="notice">This is a heuristic estimate, not a real inbox-placement test. For an actual seed-list test across Gmail/Outlook/Yahoo, run the same email through a service like Mail-Tester or GlockApps in addition to this check.</div>
+    <form id="dlv-form" class="form-grid">
+      <div class="field"><label>Subject line</label><input name="subject" placeholder="Request for Quote — {{company}}"></div>
+      <div class="field"><label>Sending domain (optional)</label><input name="domain" placeholder="yourcompany.com"></div>
+      <div class="field full"><label>HTML body</label><textarea name="html" rows="8" placeholder="<p>Hi {{first_name}}, ...</p>"></textarea></div>
+      <div class="field full"><label>Plain-text body (optional)</label><textarea name="text" rows="3"></textarea></div>
+      <div class="actions full"><button type="submit">Run check</button></div>
+    </form>
+    <div id="dlv-result"></div>`);
+  $('dlv-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    $('dlv-result').innerHTML = `<p class="muted">Checking…</p>`;
+    try {
+      const r = await api('/api/tools/deliverability', { method: 'POST', body: b });
+      const c = r.content;
+      const issuesHtml = c.issues.length
+        ? c.issues.map((i) => `<li>${badge2(severityBadge(i.severity), i.severity)} ${esc(i.message)}</li>`).join('')
+        : `<li class="muted">No content issues found. 🎉</li>`;
+      let domainHtml = '';
+      if (r.domainError) {
+        domainHtml = `<div class="notice">Domain check: ${esc(r.domainError)}</div>`;
+      } else if (r.domainAuth) {
+        const d = r.domainAuth;
+        domainHtml = `<h2>Sending domain: ${esc(d.domain)}</h2>
+          <div class="cards">
+            <div class="card"><div class="stat-label">SPF</div><div>${d.spf.found ? badge2('ok', 'found') : badge2('err', 'missing')}</div></div>
+            <div class="card"><div class="stat-label">DMARC</div><div>${d.dmarc.found ? badge2('ok', d.dmarc.policy ? `p=${d.dmarc.policy}` : 'found') : badge2('err', 'missing')}</div></div>
+            <div class="card"><div class="stat-label">Spamhaus DBL</div><div>${d.blacklist.listed === true ? badge2('err', 'listed') : d.blacklist.listed === false ? badge2('ok', 'clean') : badge2('muted', 'unknown')}</div></div>
+          </div>
+          ${d.notes.length ? `<ul>${d.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+          <p class="muted small">${esc(d.dkimNote)}</p>`;
+      }
+      $('dlv-result').innerHTML = `
+        <div class="cards">
+          <div class="card"><div class="stat ${scoreColor(c.score)}-text">${c.score}/100</div><div class="stat-label">Content score — ${esc(c.grade)}</div></div>
+          <div class="card"><div class="stat">${c.stats.wordCount}</div><div class="stat-label">Words in body</div></div>
+          <div class="card"><div class="stat">${c.stats.linkCount}</div><div class="stat-label">Links found</div></div>
+          <div class="card"><div class="stat">${c.stats.hasPlainText ? 'Yes' : 'No'}</div><div class="stat-label">Has plain-text part</div></div>
+        </div>
+        <h2>Issues</h2>
+        <ul class="issue-list">${issuesHtml}</ul>
+        ${domainHtml}`;
+    } catch (err) { $('dlv-result').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  });
+};
+
+function badge2(kind, label) { return `<span class="badge ${kind}">${esc(label)}</span>`; }
+
+views.linkcheck = async () => {
+  view(`<div class="page-head"><h1>Link checker for cold mailing</h1></div>
+    <p class="sub">Paste your email HTML/text (or a list of URLs, one per line). Each link is checked for shorteners, HTTPS, DNS resolution, redirect chains, and Spamhaus DBL blocklist status.</p>
+    <form id="lnk-form" class="form-grid">
+      <div class="field full"><label>HTML / text / URLs</label><textarea name="html" rows="8" placeholder="https://yourdomain.com/quote-form"></textarea></div>
+      <div class="actions full"><button type="submit">Check links</button></div>
+    </form>
+    <div id="lnk-result"></div>`);
+  $('lnk-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const html = e.target.html.value;
+    $('lnk-result').innerHTML = `<p class="muted">Checking links (this makes live requests, may take a few seconds)…</p>`;
+    try {
+      const r = await api('/api/tools/links', { method: 'POST', body: { html } });
+      $('lnk-result').innerHTML = `
+        <div class="cards">
+          <div class="card"><div class="stat">${r.summary.safe || 0}</div><div class="stat-label">Safe</div></div>
+          <div class="card"><div class="stat">${r.summary.caution || 0}</div><div class="stat-label">Caution</div></div>
+          <div class="card"><div class="stat">${r.summary.risky || 0}</div><div class="stat-label">Risky</div></div>
+          <div class="card"><div class="stat">${r.summary.invalid || 0}</div><div class="stat-label">Invalid</div></div>
+        </div>
+        <table style="margin-top:16px"><tr><th>URL</th><th>Verdict</th><th>Notes</th></tr>
+        ${r.results.map((l) => `<tr>
+          <td class="mono small">${esc(l.url)}${l.finalUrl && l.finalUrl !== l.url ? `<div class="muted small">→ ${esc(l.finalUrl)}</div>` : ''}</td>
+          <td>${badge2(verdictBadge(l.verdict), l.verdict)}</td>
+          <td class="small">${(l.issues || []).map(esc).join('<br>') || '<span class="muted">No issues</span>'}</td>
+        </tr>`).join('')}</table>`;
+    } catch (err) { $('lnk-result').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  });
+};
+
+views.validate = async () => {
+  view(`<div class="page-head"><h1>Lead / list validator</h1></div>
+    <p class="sub">Checks syntax, MX/mail-server records, disposable &amp; role-based addresses, and common domain typos — the same signals hygiene tools like Debounce/ZeroBounce use. Clean your list before sending to cut bounces and protect sender reputation.</p>
+    <form id="val-form" class="form-grid">
+      <div class="field full"><label>Emails (one per line, or paste a CSV — any column with @ addresses works)</label>
+        <textarea name="emails" rows="8" placeholder="jane@example.com&#10;john@example.org"></textarea></div>
+      <div class="field full"><label><input type="checkbox" name="smtp" style="width:auto"> Attempt live mailbox check (best-effort SMTP probe; slower and often blocked by network egress rules — falls back to the MX-based result automatically)</label></div>
+      <div class="actions full"><button type="submit">Validate</button></div>
+    </form>
+    <div id="val-result"></div>`);
+  $('val-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const emails = String(fd.get('emails') || '').match(/[^\s,;]+@[^\s,;]+/g) || [];
+    const smtp = fd.get('smtp') === 'on';
+    if (!emails.length) { toast('Paste at least one email address', 'err'); return; }
+    $('val-result').innerHTML = `<p class="muted">Validating ${emails.length} address(es)${smtp ? ' with live mailbox checks (this can take a while)' : ''}…</p>`;
+    try {
+      const r = await api('/api/tools/validate-emails', { method: 'POST', body: { emails, smtp } });
+      state.lastValidation = r.results;
+      $('val-result').innerHTML = `
+        <div class="cards">
+          <div class="card"><div class="stat">${r.summary.valid}</div><div class="stat-label">Valid</div></div>
+          <div class="card"><div class="stat">${r.summary.risky}</div><div class="stat-label">Risky</div></div>
+          <div class="card"><div class="stat">${r.summary.disposable}</div><div class="stat-label">Disposable</div></div>
+          <div class="card"><div class="stat">${r.summary.invalid}</div><div class="stat-label">Invalid</div></div>
+        </div>
+        <div class="toolbar"><span class="muted small">${r.truncated ? 'List truncated to the per-request cap.' : ''}</span>
+          <button class="tiny secondary" id="dl-valid">Download valid emails (.txt)</button></div>
+        <table><tr><th>Email</th><th>Status</th><th>Score</th><th>Details</th></tr>
+        ${r.results.map((v) => `<tr>
+          <td class="mono small">${esc(v.email)}</td>
+          <td>${badge2(verdictBadge(v.status), v.status)}${v.roleBased ? ' ' + badge2('muted', 'role') : ''}${v.freeProvider ? ' ' + badge2('muted', 'free') : ''}</td>
+          <td>${v.score}</td>
+          <td class="small">${esc(v.reason || '')}${v.typoSuggestion ? ` — did you mean <b>${esc(v.typoSuggestion)}</b>?` : ''}</td>
+        </tr>`).join('')}</table>`;
+      $('dl-valid').addEventListener('click', () => {
+        const valid = (state.lastValidation || []).filter((v) => v.status === 'valid').map((v) => v.email);
+        const blob = new Blob([valid.join('\n')], { type: 'text/plain' });
+        const a = el(`<a href="${URL.createObjectURL(blob)}" download="valid-emails.txt"></a>`);
+        document.body.appendChild(a); a.click(); a.remove();
+      });
+    } catch (err) { $('val-result').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  });
 };
 
 views.apikeys = async () => {
