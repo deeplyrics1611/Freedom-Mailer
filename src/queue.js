@@ -269,7 +269,24 @@ async function verifyTick() {
   }
 }
 
+// A message is flipped to 'sending' before the SMTP handshake, so a crash or
+// restart mid-send would strand it there forever. Anything left in that state
+// at startup is put back in the queue; the attempt has already been counted, so
+// a message that reliably kills the process still gives up after MAX_ATTEMPTS.
+function recoverInterrupted() {
+  const info = db
+    .prepare("UPDATE messages SET status = 'queued', error = 'interrupted by a restart' WHERE status = 'sending'")
+    .run();
+  if (info.changes) console.log(`[queue] requeued ${info.changes} message(s) interrupted by a restart`);
+
+  // Bulk validation jobs are safe to resume: processed rows are removed from
+  // the queue table as they complete.
+  const jobs = db.prepare("UPDATE verification_jobs SET status = 'queued' WHERE status = 'running'").run();
+  if (jobs.changes) console.log(`[verify] resumed ${jobs.changes} interrupted job(s)`);
+}
+
 export function startWorker() {
+  recoverInterrupted();
   console.log(`[queue] worker started (rate ${config.globalRatePerMinute}/min)`);
   setInterval(tick, TICK_MS);
   setInterval(verifyTick, VERIFY_TICK_MS);

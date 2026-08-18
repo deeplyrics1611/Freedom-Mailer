@@ -359,7 +359,6 @@ function sendOutreach(req, res, campaign) {
     });
   }
 
-  const mailboxId = null;
   if (campaign.use_pool) {
     const usable = poolStatus(req.user.id).filter((m) => m.verified && m.active);
     if (!usable.length) return res.status(400).json({ error: 'Add and verify at least one mailbox in the sending pool first' });
@@ -390,7 +389,9 @@ function sendOutreach(req, res, campaign) {
         postalAddress: campaign.postal_address,
       });
       insert.run(
-        req.user.id, campaign.id, campaign.use_pool ? null : campaign.sender_id, mailboxId,
+        // mailbox_id is left null for pool sends: the mailbox is chosen at
+        // dispatch time from whichever accounts still have capacity.
+        req.user.id, campaign.id, campaign.use_pool ? null : campaign.sender_id, null,
         campaign.use_pool ? 1 : 0, lead.id, lead.email, subject,
         withFooter.html, withFooter.text, lead.unsub_token, campaign.reply_to || '',
         `+${offsets[i]} seconds`

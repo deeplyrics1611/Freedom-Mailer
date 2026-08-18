@@ -245,7 +245,7 @@ function renderPreflight(p) {
       <b>${p.ready ? 'Ready to send.' : 'Not ready to send.'}</b>
       ${p.recipients ? ` ${p.recipients.eligible} eligible of ${p.recipients.total} leads.` : ''}
       ${p.content_score !== undefined ? ` Content score ${p.content_score}/10.` : ''}
-      ${p.pool_capacity_today !== null && p.pool_capacity_today !== undefined ? ` Pool can send ${p.pool_capacity_today} more today.` : ''}
+      ${p.pool_capacity_today !== null && p.pool_capacity_today !== undefined ? ` Pool can send ${p.pool_capacity_today} more in the next 24h.` : ''}
     </div>
     ${p.blockers?.length ? `<ul class="findings">${p.blockers.map((b) => `<li class="finding critical">
       <span class="finding-icon">✕</span><div class="finding-body"><div class="finding-detail">${esc(b)}</div></div></li>`).join('')}</ul>` : ''}

@@ -24,9 +24,17 @@ export function decryptSecret(stored) {
   const iv = raw.subarray(0, 12);
   const tag = raw.subarray(12, 28);
   const body = raw.subarray(28);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', KEY, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
+  } catch {
+    // GCM authentication fails when the key has changed. The raw error
+    // ("unable to authenticate data") gives no clue what to do about it.
+    throw new Error(
+      'Could not decrypt the stored app password. This happens when CREDENTIAL_KEY has changed since it was saved — restore the previous value, or re-enter the app password for this mailbox.'
+    );
+  }
 }
 
 // Google shows app passwords as "abcd efgh ijkl mnop"; the spaces are display

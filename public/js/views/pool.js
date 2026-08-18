@@ -47,7 +47,7 @@ export async function poolView() {
         <div class="field"><label>Reply-to (optional)</label><input name="reply_to" type="email"></div>
         <div class="field custom-only hidden"><label>SMTP host</label><input name="host" placeholder="smtp.yourhost.com"></div>
         <div class="field custom-only hidden"><label>Port</label><input name="port" type="number" value="587"></div>
-        <div class="field"><label>Daily cap</label><input name="daily_limit" type="number" value="400"></div>
+        <div class="field"><label>Cap per rolling 24 hours</label><input name="daily_limit" type="number" value="400"></div>
         <div class="field"><label>Hourly cap</label><input name="hourly_limit" type="number" value="40"></div>
         <div class="field"><label>Minimum gap between sends (seconds)</label>
           <input name="min_gap_sec" type="number" value="45">
@@ -137,7 +137,7 @@ async function renderPool() {
     card(mailboxes.length, 'Mailboxes'),
     card(mailboxes.filter((m) => m.verified && m.active).length, 'Ready to send'),
     card(available_now, 'Free right now', 'The rest are at a cap or pacing'),
-    card(capacity_today, 'Messages left today', 'Across the whole pool'),
+    card(capacity_today, 'Sends left in 24h', 'Across the whole pool'),
   ].join('');
 
   if (!mailboxes.length) {
@@ -148,16 +148,16 @@ async function renderPool() {
   }
 
   $('mb-table').innerHTML =
-    `<tr><th>Mailbox</th><th>Status</th><th>Today</th><th>This hour</th><th>Warm-up</th><th></th></tr>` +
+    `<tr><th>Mailbox</th><th>Status</th><th>Last 24h</th><th>This hour</th><th>Warm-up</th><th></th></tr>` +
     mailboxes
       .map((m) => `<tr>
         <td><b>${esc(m.label)}</b><div class="muted small mono">${esc(m.email)}</div></td>
         <td>${m.verified ? badge(m.available ? 'verified' : 'pending') : badge('failed')}
           ${m.blockers.length ? `<div class="muted small">${esc(m.blockers.join(' · '))}</div>` : ''}
           ${m.last_error ? `<div class="err-text small">${esc(m.last_error.slice(0, 140))}</div>` : ''}</td>
-        <td>${progress(m.sent_today, m.warmup_day_limit)}</td>
+        <td>${progress(m.sent_24h, m.effective_daily_limit)}</td>
         <td class="small">${m.sent_this_hour} / ${m.hourly_limit}</td>
-        <td class="small">${m.warmup ? `${m.warmup_day_limit} of ${m.daily_limit}` : 'off'}</td>
+        <td class="small">${m.warmup ? `${m.effective_daily_limit} of ${m.daily_limit}` : 'off'}</td>
         <td class="nowrap">
           <button class="tiny secondary" data-v="${m.id}">Verify</button>
           <button class="tiny secondary" data-t="${m.id}">Test</button>
@@ -227,7 +227,7 @@ async function showDetail(id, mailboxes) {
       <div>
         <h3>Limits</h3>
         <form id="limit-form" class="form-grid">
-          <div class="field"><label>Daily cap</label><input name="daily_limit" type="number" value="${mailbox.daily_limit}"></div>
+          <div class="field"><label>Cap per rolling 24h</label><input name="daily_limit" type="number" value="${mailbox.daily_limit}"></div>
           <div class="field"><label>Hourly cap</label><input name="hourly_limit" type="number" value="${mailbox.hourly_limit}"></div>
           <div class="field"><label>Gap between sends (s)</label><input name="min_gap_sec" type="number" value="${mailbox.min_gap_sec}"></div>
           <div class="field"><label>From name</label><input name="from_name" value="${esc(mailbox.from_name)}"></div>
@@ -235,7 +235,9 @@ async function showDetail(id, mailboxes) {
             <input name="app_password" type="password" autocomplete="off" placeholder="abcd efgh ijkl mnop"></div>
           <div class="actions full"><button type="submit">Save</button></div>
         </form>
-        <p class="muted small">Warm-up currently allows ${effective_daily_limit} sends per day.</p>
+        <p class="muted small">Warm-up currently allows ${effective_daily_limit} sends per rolling 24 hours.
+          Counting the real 24-hour window rather than the calendar day is deliberate: providers do the same,
+          so a calendar-day counter would let this mailbox send a full allowance either side of midnight.</p>
       </div>
       <div>
         <h3>Last 30 days</h3>

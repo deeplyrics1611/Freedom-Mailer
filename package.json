@@ -10,7 +10,8 @@
     "seed": "node src/seed.js",
     "test:api": "./scripts/smoke-test.sh",
     "test:rotation": "node scripts/test-rotation.js",
-    "test": "./scripts/smoke-test.sh && node scripts/test-rotation.js"
+    "test:pool": "node scripts/test-pool-window.js",
+    "test": "node scripts/test-pool-window.js && ./scripts/smoke-test.sh && node scripts/test-rotation.js"
   },
   "engines": {
     "node": ">=20"

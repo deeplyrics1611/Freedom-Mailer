@@ -218,7 +218,7 @@ try {
   const ours = status.mailboxes.filter((m) => mailboxes.includes(m.id));
   const otherCapacity = status.mailboxes
     .filter((m) => !mailboxes.includes(m.id))
-    .reduce((sum, m) => (m.verified && m.active ? sum + m.remaining_today : sum), 0);
+    .reduce((sum, m) => (m.verified && m.active ? sum + m.remaining_24h : sum), 0);
 
   check(status.capacity_today - otherCapacity === 0,
     `the test mailboxes report no capacity left (pool total ${status.capacity_today}, other mailboxes ${otherCapacity})`);

@@ -53,7 +53,7 @@ export async function dashboardView(go) {
       ${hint ? `<div class="muted small">${esc(hint)}</div>` : ''}</div>`;
 
   $('d-cards').innerHTML = [
-    card(s.pool_capacity_today, 'Sends left today', `${s.mailboxes_verified} of ${s.mailboxes} mailboxes ready`),
+    card(s.pool_capacity_today, 'Sends left in 24h', `${s.mailboxes_verified} of ${s.mailboxes} mailboxes ready`),
     card(s.sent_today, 'Sent today'),
     card(s.queued, 'Waiting in the queue'),
     card(s.leads, 'Leads', s.leads_unchecked ? `${s.leads_unchecked} not yet validated` : 'all validated'),

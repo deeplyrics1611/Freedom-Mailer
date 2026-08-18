@@ -39,14 +39,30 @@ export function effectiveDailyLimit(mailbox) {
   return Math.max(1, Math.min(mailbox.daily_limit, ramped));
 }
 
+const bucketOf = (d) => `${utcDay(d)}T${String(utcHour(d)).padStart(2, '0')}`;
+
+/**
+ * Usage over a rolling 24-hour window, not a calendar day.
+ *
+ * This matters: providers enforce a rolling window — Google's own wording is
+ * that the limit clears about 24 hours after it was hit. Counting per calendar
+ * day would let a mailbox send its full allowance at 23:00 and again at 00:01,
+ * which is exactly the burst that gets an account locked out.
+ */
 export function usageFor(mailboxId, now = new Date()) {
-  const day = utcDay(now);
-  const hour = utcHour(now);
-  const today = db.prepare('SELECT COALESCE(SUM(sent), 0) n FROM mailbox_usage WHERE mailbox_id = ? AND day = ?')
-    .get(mailboxId, day).n;
-  const thisHour = db.prepare('SELECT COALESCE(sent, 0) n FROM mailbox_usage WHERE mailbox_id = ? AND day = ? AND hour = ?')
-    .get(mailboxId, day, hour)?.n ?? 0;
-  return { today, thisHour, day, hour };
+  const since = bucketOf(new Date(now.getTime() - 23 * 3_600_000));
+  const rolling24 = db
+    .prepare(
+      `SELECT COALESCE(SUM(sent), 0) n FROM mailbox_usage
+       WHERE mailbox_id = ? AND (day || 'T' || printf('%02d', hour)) >= ?`
+    )
+    .get(mailboxId, since).n;
+
+  const thisHour = db
+    .prepare('SELECT COALESCE(sent, 0) n FROM mailbox_usage WHERE mailbox_id = ? AND day = ? AND hour = ?')
+    .get(mailboxId, utcDay(now), utcHour(now))?.n ?? 0;
+
+  return { rolling24, thisHour, day: utcDay(now), hour: utcHour(now) };
 }
 
 export function recordSend(mailboxId, now = new Date()) {
@@ -68,12 +84,17 @@ export function poolStatus(userId, now = new Date()) {
     const gapRemaining = lastSend ? Math.max(0, m.min_gap_sec * 1000 - (now.getTime() - lastSend)) : 0;
 
     const blockers = [];
-    if (!m.active) blockers.push('paused by you');
+    if (!m.active) {
+      // A mailbox is deactivated either by the operator or automatically after
+      // an authentication failure; saying which one avoids a confusing
+      // "paused by you" on a mailbox nobody touched.
+      blockers.push(m.verified ? 'paused by you' : 'deactivated after a sign-in failure');
+    }
     if (!m.verified) blockers.push('not verified');
     if (pausedUntil && pausedUntil > now.getTime()) {
       blockers.push(`cooling down until ${new Date(pausedUntil).toISOString().slice(11, 16)} UTC`);
     }
-    if (usage.today >= dailyLimit) blockers.push(`daily cap reached (${usage.today}/${dailyLimit})`);
+    if (usage.rolling24 >= dailyLimit) blockers.push(`daily cap reached (${usage.rolling24}/${dailyLimit} in the last 24h)`);
     if (usage.thisHour >= m.hourly_limit) blockers.push(`hourly cap reached (${usage.thisHour}/${m.hourly_limit})`);
     if (gapRemaining > 0) blockers.push(`pacing (${Math.ceil(gapRemaining / 1000)}s to go)`);
 
@@ -92,23 +113,23 @@ export function poolStatus(userId, now = new Date()) {
       last_error: m.last_error,
       last_send_at: m.last_send_at,
       warmup: !!m.warmup,
-      warmup_day_limit: dailyLimit,
+      effective_daily_limit: dailyLimit,
       daily_limit: m.daily_limit,
       hourly_limit: m.hourly_limit,
       min_gap_sec: m.min_gap_sec,
-      sent_today: usage.today,
+      sent_24h: usage.rolling24,
       sent_this_hour: usage.thisHour,
-      remaining_today: Math.max(0, dailyLimit - usage.today),
+      remaining_24h: Math.max(0, dailyLimit - usage.rolling24),
       available: blockers.length === 0,
       blockers,
     };
   });
 }
 
-/** Total messages the pool can still send today. */
+/** Total messages the pool can still send within the current 24-hour window. */
 export function poolCapacity(userId) {
   return poolStatus(userId).reduce(
-    (sum, m) => (m.active && m.verified ? sum + m.remaining_today : sum),
+    (sum, m) => (m.active && m.verified ? sum + m.remaining_24h : sum),
     0
   );
 }
@@ -126,8 +147,8 @@ export function pickMailbox(userId, { only = null, now = new Date() } = {}) {
   if (!eligible.length) return null;
 
   eligible.sort((a, b) => {
-    const ua = a.sent_today / Math.max(1, a.warmup_day_limit);
-    const ub = b.sent_today / Math.max(1, b.warmup_day_limit);
+    const ua = a.sent_24h / Math.max(1, a.effective_daily_limit);
+    const ub = b.sent_24h / Math.max(1, b.effective_daily_limit);
     if (Math.abs(ua - ub) > 0.001) return ua - ub;
     const la = parseSqlTime(a.last_send_at) ?? 0;
     const lb = parseSqlTime(b.last_send_at) ?? 0;

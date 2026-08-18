@@ -18,12 +18,16 @@ scoped, so it is worth being clear up front.
 account off at roughly 500 recipients a day and a Workspace account at roughly
 2,000; going over locks the account out of sending for about a day. The pool
 spreads a campaign across the mailboxes you have added, keeps each one inside
-its own daily and hourly cap, ramps new mailboxes up gradually, and paces
-sends. Every message goes out under the real identity of the account that sent
-it, fully authenticated. There is no proxy rotation, no IP rotation, no header
-spoofing, and no content randomisation — those exist to defeat filters, they
-are what spam operations do, and they do not survive contact with a modern
-receiver anyway.
+its own cap, ramps new mailboxes up gradually, and paces sends. Every message
+goes out under the real identity of the account that sent it, fully
+authenticated. There is no proxy rotation, no IP rotation, no header spoofing,
+and no content randomisation — those exist to defeat filters, they are what spam
+operations do, and they do not survive contact with a modern receiver anyway.
+
+Caps are counted over a **rolling 24-hour window**, not a calendar day, because
+that is how providers enforce them. A calendar-day counter would happily let a
+mailbox send its full allowance at 23:00 and again at 00:01, which is exactly
+the burst that gets an account locked out.
 
 **The checks predict problems; they do not promise placement.** Nothing can
 tell you in advance what Gmail will do with a specific message, because the
@@ -37,9 +41,11 @@ way to record where real seed messages actually landed.
 ### Sending
 
 - **Mailbox pool** — add as many app-password mailboxes as you own. Each one
-  has its own daily cap, hourly cap and minimum gap between sends. Sends go to
-  the least-utilised available mailbox, so a mixed pool of free and Workspace
-  accounts drains evenly. App passwords are encrypted at rest (AES-256-GCM).
+  has its own rolling-24-hour cap, hourly cap and minimum gap between sends.
+  Sends go to the mailbox with the lowest utilisation *as a fraction of its own
+  allowance*, so a mixed pool of free and Workspace accounts drains evenly
+  instead of exhausting the smallest one first. App passwords are encrypted at
+  rest (AES-256-GCM).
 - **Warm-up** — new mailboxes start at a low daily volume and ramp up, because
   an account that suddenly sends hundreds of messages looks compromised.
 - **Automatic back-off** — a mailbox that gets rate-limited cools down for two
@@ -265,7 +271,9 @@ src/
                    links, messaging (API), public (confirm/unsubscribe)
 public/            Panel: vanilla ES-module SPA (js/core.js + js/views/*)
 scripts/
-  smoke-test.sh    End-to-end exercise of every feature against a running server
+  smoke-test.sh        Endpoint coverage against a running server
+  test-rotation.js     Pool rotation against a live local SMTP server
+  test-pool-window.js  Rolling-window, warm-up and selection unit tests
 ```
 
 ## Tests
@@ -276,6 +284,9 @@ Both suites run against a live server, so start it first (`npm start`) and then:
 npm test
 ```
 
+- `npm run test:pool` — unit tests for the rolling-window accounting, hourly
+  caps, warm-up ramp and mailbox selection order. Runs against the database
+  directly, no server needed.
 - `npm run test:api` — exercises every endpoint: the pool, CSV import,
   validation, spam/HTML analysis, domain authentication, header parsing, link
   checks, personalisation, the compliance gates and opt-out handling.
