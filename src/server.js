@@ -115,8 +115,18 @@ app.use('/api/v1', apiLimiter, messagingRoutes);
 // Public compliance endpoints (/c/:token, /u/:token).
 app.use('/', publicRoutes);
 
-// Static admin panel.
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// Static admin panel. The panel and the API are versioned together, so a
+// browser holding a cached module after an update would run old JavaScript
+// against a new API. `no-cache` still allows a cheap 304 via ETag, but forces
+// the browser to revalidate rather than serve a stale module from memory.
+app.use(
+  express.static(path.join(__dirname, '..', 'public'), {
+    etag: true,
+    setHeaders: (res, filePath) => {
+      if (/\.(js|css|html)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    },
+  })
+);
 
 app.use((err, req, res, next) => {
   console.error(err);
