@@ -14,6 +14,10 @@ check() {
   else fail=$((fail+1)); printf '  \033[31mFAIL\033[0m %s\n' "$2"; fi
 }
 
+# Opt-outs and suppressions are permanent by design, so each run needs its own
+# addresses or later runs would find their test leads already suppressed.
+RUN="$(date +%s)$$"
+
 TOKEN=$(curl -sS -X POST "$BASE/api/auth/login" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).token||""')
 [ -n "$TOKEN" ] || { echo "Could not sign in to $BASE"; exit 1; }
@@ -28,12 +32,12 @@ console.log(typeof v==='object'?JSON.stringify(v):String(v));
 
 step 'Mailbox pool'
 curl -sS "${auth[@]}" -X POST "$BASE/api/mailboxes" \
-  -d '{"provider":"gmail","label":"Sales 1","email":"smoke-sales1@gmail.com","app_password":"abcd efgh ijkl mnop","from_name":"Smoke Test"}' >/tmp/mb1.json
+  -d "{\"provider\":\"gmail\",\"label\":\"Sales 1\",\"email\":\"smoke-$RUN@gmail.com\",\"app_password\":\"abcd efgh ijkl mnop\",\"from_name\":\"Smoke Test\"}" >/tmp/mb1.json
 MB1=$(jqf id </tmp/mb1.json)
 [ "$MB1" != "undefined" ] && check ok "created mailbox #$MB1" || { check bad "create mailbox: $(cat /tmp/mb1.json)"; }
 
 curl -sS "${auth[@]}" -X POST "$BASE/api/mailboxes" \
-  -d '{"provider":"gmail","label":"Sales 2","email":"smoke-sales2@gmail.com","app_password":"short"}' >/tmp/mb2.json
+  -d "{\"provider\":\"gmail\",\"label\":\"Sales 2\",\"email\":\"smoke2-$RUN@gmail.com\",\"app_password\":\"short\"}" >/tmp/mb2.json
 grep -q '16 characters' /tmp/mb2.json && check ok 'rejects a malformed app password with a useful message' || check bad 'app password validation'
 
 POOL=$(curl -sS "${auth[@]}" "$BASE/api/mailboxes")
@@ -41,15 +45,15 @@ echo "$POOL" | grep -q 'not verified' && check ok 'unverified mailbox is reporte
 echo "$POOL" | grep -q 'app_password' && check bad 'app password leaked in the API response' || check ok 'app password never returned by the API'
 
 step 'Lead list import'
-LL=$(curl -sS "${auth[@]}" -X POST "$BASE/api/lead-lists" -d '{"name":"Smoke suppliers"}' | jqf id)
+LL=$(curl -sS "${auth[@]}" -X POST "$BASE/api/lead-lists" -d "{\"name\":\"Smoke suppliers $RUN\"}" | jqf id)
 check ok "created lead list #$LL"
 
-CSV='Email,First Name,Company,Product,Qty
-buyer@example.com,Dana,Acme Tools,M8 bolts,5000
-sales@example.org,,Beta Fasteners,M8 bolts,5000
-BUYER@example.com,Dana,Acme Tools,M8 bolts,5000
+CSV="Email,First Name,Company,Product,Qty
+buyer-$RUN@example.com,Dana,Acme Tools,M8 bolts,5000
+sales-$RUN@example.org,,Beta Fasteners,M8 bolts,5000
+BUYER-$RUN@example.com,Dana,Acme Tools,M8 bolts,5000
 not-an-email,Bad,Row,,
-temp@mailinator.com,Trash,Throwaway,,'
+temp-$RUN@mailinator.com,Trash,Throwaway,,"
 node -e "
 const csv = process.argv[1];
 console.log(JSON.stringify({csv}));

@@ -212,6 +212,16 @@ router.post('/:id/preview', (req, res) => {
   });
 });
 
+// The footer is appended at send time, so any analysis of the draft has to
+// include it to reflect what the recipient will receive. A placeholder token
+// stands in for the per-recipient unsubscribe link.
+function composeForAnalysis(campaign) {
+  const base = { html: campaign.html, text: campaign.text || htmlToText(campaign.html) };
+  return campaign.mode === 'outreach'
+    ? withOutreachFooter(base, { token: 'preview-token', postalAddress: campaign.postal_address })
+    : withUnsubscribeFooter(base, 'preview-token');
+}
+
 /** Everything that would stop this campaign from sending, before it is queued. */
 router.get('/:id/preflight', (req, res) => {
   const campaign = db
@@ -265,10 +275,14 @@ router.get('/:id/preflight', (req, res) => {
     blockers.push('No sending mailbox, sender identity or system SMTP is configured.');
   }
 
+  // Analyse the message as it will actually be sent — with the opt-out footer
+  // this platform appends — rather than the raw draft, which would report a
+  // missing unsubscribe link that is in fact always added.
+  const composed = composeForAnalysis(campaign);
   const content = analyzeContent({
     subject: campaign.subject,
-    html: campaign.html,
-    text: campaign.text,
+    html: composed.html,
+    text: composed.text,
     fromEmail,
     postalAddress: campaign.postal_address,
     mode: campaign.mode,

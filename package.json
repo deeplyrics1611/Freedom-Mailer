@@ -1,7 +1,7 @@
 {
   "name": "freedom-mailer",
   "version": "1.0.0",
-  "description": "A compliant multi-channel messaging platform: email (SMTP + API) and SMS with an admin/user panel, opt-in list management, unsubscribe handling, and suppression lists.",
+  "description": "Self-hosted email outreach and deliverability platform: app-password mailbox pool with quota-aware rotation, lead validation, spam/HTML and inbox-placement checks, link checking, and compliant campaign sending.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
