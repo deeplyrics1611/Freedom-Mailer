@@ -270,15 +270,24 @@ scripts/
 
 ## Tests
 
-With the server running:
+Both suites run against a live server, so start it first (`npm start`) and then:
 
 ```bash
-./scripts/smoke-test.sh
+npm test
 ```
 
-Covers the pool, CSV import, validation, spam/HTML analysis, domain
-authentication, header parsing, link checks, personalisation, the compliance
-gates and opt-out handling. The script is safe to re-run.
+- `npm run test:api` — exercises every endpoint: the pool, CSV import,
+  validation, spam/HTML analysis, domain authentication, header parsing, link
+  checks, personalisation, the compliance gates and opt-out handling.
+- `npm run test:rotation` — stands up a local SMTP server, points a pool of
+  mailboxes with caps of 4, 4 and 2 at it, sends a ten-recipient campaign, and
+  asserts the sends were distributed 4/4/2, that each message carried the right
+  From identity and unsubscribe headers with merge fields resolved, and that
+  once the caps were reached the remaining messages were deferred with a
+  readable reason rather than failed.
+
+Both scripts use run-unique addresses and clean up after themselves, so they
+are safe to re-run.
 
 ## License
 

@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "test:api": "./scripts/smoke-test.sh",
+    "test:rotation": "node scripts/test-rotation.js",
+    "test": "./scripts/smoke-test.sh && node scripts/test-rotation.js"
   },
   "engines": {
     "node": ">=20"
@@ -23,5 +26,8 @@
     "nanoid": "^5.0.7",
     "nodemailer": "^6.9.15"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "smtp-server": "^3.19.3"
+  }
 }
