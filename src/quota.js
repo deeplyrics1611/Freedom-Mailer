@@ -277,12 +277,14 @@ export async function buildQuotaReport(user) {
   };
 
   const smtp = db.prepare(
-    `SELECT id, label, from_email, host, verified, kind, daily_limit, sent_today, last_used_at
+    `SELECT id, label, from_email, host, verified, kind, provider, region,
+            socks5_host, socks5_port, daily_limit, sent_today, last_used_at
      FROM senders WHERE user_id = ? AND kind != 'gmail' ORDER BY id DESC`
   ).all(uid).map((s) => ({
     ...s,
     sent_today: s.sent_today || 0,
     remaining_today: Math.max(0, (s.daily_limit || 80) - (s.sent_today || 0)),
+    socks5: s.socks5_host ? `${s.socks5_host}:${s.socks5_port || 1080}` : '',
   }));
 
   const apiKeys = db.prepare(

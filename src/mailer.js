@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
+import * as socks from 'socks';
 import { config } from './config.js';
 import { decryptSecret } from './secrets.js';
+import { socks5Url } from './smtpCatalog.js';
 
 function authFor(sender) {
   if (!sender) return null;
@@ -10,26 +12,51 @@ function authFor(sender) {
   };
 }
 
+function proxyFor(sender) {
+  if (!sender?.socks5_host) return undefined;
+  return socks5Url({
+    host: sender.socks5_host,
+    port: sender.socks5_port || 1080,
+    user: sender.socks5_user || '',
+    pass: decryptSecret(sender.socks5_pass || ''),
+  });
+}
+
+function attachProxy(transport) {
+  if (typeof transport.set === 'function') {
+    transport.set('proxy_socks_module', socks);
+  }
+  return transport;
+}
+
 // Build a nodemailer transport from a stored sender identity, or fall back to
 // the system SMTP credentials in the environment.
 export function transportForSender(sender) {
   if (sender) {
     const auth = authFor(sender);
+    const proxy = proxyFor(sender);
+    const base = {
+      auth,
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      ...(proxy ? { proxy } : {}),
+    };
     if (sender.kind === 'gmail' || /gmail\.com$/i.test(sender.host || '')) {
-      return nodemailer.createTransport({
+      return attachProxy(nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 587,
         secure: false,
         requireTLS: true,
-        auth,
-      });
+        ...base,
+      }));
     }
-    return nodemailer.createTransport({
+    return attachProxy(nodemailer.createTransport({
       host: sender.host,
       port: sender.port,
       secure: !!sender.secure,
-      auth,
-    });
+      requireTLS: !sender.secure,
+      ...base,
+    }));
   }
   const s = config.systemSmtp;
   if (!s.host || !s.user) {

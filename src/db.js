@@ -168,6 +168,12 @@ addColumn('senders', 'sent_today', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('senders', 'sent_date', "TEXT NOT NULL DEFAULT ''");
 addColumn('senders', 'last_used_at', 'TEXT');
 addColumn('senders', 'active', 'INTEGER NOT NULL DEFAULT 1');
+addColumn('senders', 'provider', "TEXT NOT NULL DEFAULT 'smtp'");
+addColumn('senders', 'region', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'socks5_host', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'socks5_port', 'INTEGER');
+addColumn('senders', 'socks5_user', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'socks5_pass', "TEXT NOT NULL DEFAULT ''");
 
 addColumn('contacts', 'first_name', "TEXT NOT NULL DEFAULT ''");
 addColumn('contacts', 'last_name', "TEXT NOT NULL DEFAULT ''");

@@ -69,6 +69,9 @@ app.get('/api/stats', requireAuth, (req, res) => {
     gmail_ready: db.prepare(
       `SELECT COUNT(*) n FROM senders WHERE user_id = ? AND kind='gmail' AND verified=1 AND active=1 AND in_rotation=1`
     ).get(uid).n,
+    smtp_ready: db.prepare(
+      `SELECT COUNT(*) n FROM senders WHERE user_id = ? AND kind != 'gmail' AND verified=1 AND active=1`
+    ).get(uid).n,
     sms_providers: db.prepare(
       `SELECT COUNT(*) n FROM sms_providers WHERE user_id = ? AND verified=1 AND active=1`
     ).get(uid).n,

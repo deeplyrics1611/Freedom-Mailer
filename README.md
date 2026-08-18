@@ -15,7 +15,7 @@ This is for mailboxes **you control**. Gmail’s consumer terms are not a bulk E
 - **Lead validation** — Debounce-style scoring: syntax, typos, disposable domains, role accounts, **MX**. Optional SMTP `RCPT TO` probe if outbound port 25 is open. Corporate MX with no risk flags scores **99**.
 - **CSV import** — `email,first_name,last_name,company,title,phone`. Undeliverable leads are skipped at send time.
 - **SMS** — Twilio (`TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`) plus Vonage, MessageBird, Plivo, Telnyx, Infobip, ClickSend, Sinch, Twilio-compatible APIs, or a custom HTTPS webhook. Panel + `POST /api/v1/sms`.
-- **Quotas & usage** — live lookup of Twilio (and other gateway) balance, SMS usage today/month, numbers on the account; Gmail/SMTP remaining caps; QuoteMail API key send counts. Also `GET /api/v1/quota`.
+- **Email SMTP** — AWS SES (US + Tokyo/Osaka), SendGrid, Mailchimp/Mandrill, Mailgun, Postmark, SparkPost, Brevo, Mailjet, Microsoft 365, plus Japan hosts (Sakura, Lolipop, Xserver, Value Domain, MuuMuu, Heteml, ConoHa). Optional **SOCKS5 per identity** so you can tunnel through a Japanese VPS you operate, then send via Japan-region SMTP. One proxy per identity — not a rotating proxy list. Gmail app passwords stay in **Gmail pool**.
 
 ## Quick start
 
@@ -32,7 +32,8 @@ Open <http://localhost:3000> and sign in with `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTR
 3. **Contacts / Lists** — import CSV.
 4. **Lead validation** — paste the list, drop undeliverable rows.
 5. **Deliverability** — paste the RFQ HTML, run spam + link + inbox checks.
-6. **RFQ campaigns** — load a template, personalize, rotate pool, send.
+6. **Email SMTP** — add SES / SendGrid / Mailchimp / Japan SMTP. For Japan send-out, set SOCKS5 on a VPS you own, verify, then pick that identity on an RFQ campaign (single sender, not Gmail rotate).
+7. **RFQ campaigns** — load a template, personalize, rotate pool or send from one SMTP identity.
 
 ## Gmail app passwords
 
@@ -71,7 +72,8 @@ npm test
 src/
   server.js         Express + worker
   db.js             SQLite schema
-  mailer.js         Nodemailer / Gmail SMTP
+  mailer.js         Nodemailer / Gmail + ESP SMTP (optional SOCKS5)
+  smtpCatalog.js    AWS / SendGrid / Mailchimp / Japan SMTP presets
   rotate.js         Gmail pool picker + daily caps
   secrets.js        App-password encryption
   placeholders.js   Merge fields

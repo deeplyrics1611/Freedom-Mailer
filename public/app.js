@@ -42,6 +42,7 @@ const NAV = [
   ['dashboard', 'Dashboard'],
   ['quota', 'Quotas & usage'],
   ['gmail', 'Gmail pool'],
+  ['senders', 'Email SMTP'],
   ['sms', 'SMS'],
   ['campaigns', 'RFQ campaigns'],
   ['lists', 'Lists'],
@@ -49,7 +50,6 @@ const NAV = [
   ['leads', 'Lead validation'],
   ['deliverability', 'Deliverability'],
   ['templates', 'Templates'],
-  ['senders', 'SMTP senders'],
   ['suppressions', 'Suppressions'],
   ['messages', 'Message log'],
   ['apikeys', 'API keys'],
@@ -119,13 +119,13 @@ const PH = ['first_name', 'last_name', 'name', 'email', 'company', 'title', 'pho
 
 views.dashboard = async () => {
   view(`<div class="page-head"><div><h1>Dashboard</h1></div></div>
-    <p class="sub">Gmail RFQ sending, validation, and placement tools.</p>
+    <p class="sub">Gmail RFQ sending, ESP SMTP (AWS / SendGrid / Mailchimp), Japan SMTP + SOCKS5, validation, and placement tools.</p>
     <div id="d-cards" class="cards"></div>
-    <div class="notice" style="margin-top:18px">Add Gmail <b>app passwords</b> under Gmail pool, import leads, run MX validation, then send a personalized RFQ campaign. Rotation spreads sends across the accounts you own, each with a daily cap.</div>`);
+    <div class="notice" style="margin-top:18px">Add identities under <b>Gmail pool</b> or <b>Email SMTP</b> (SES, SendGrid, Mailchimp, Japan hosts). For Japan send-out, set SOCKS5 on a VPS you operate, verify, then pick that identity on an RFQ campaign. Import leads, run MX validation, then send. Gmail rotation spreads sends across accounts you own, each with a daily cap.</div>`);
   const s = await api('/api/stats');
   const card = (n, label) => `<div class="card"><div class="stat">${n}</div><div class="stat-label">${label}</div></div>`;
   $('d-cards').innerHTML = [
-    card(s.gmail_ready, 'Gmail accounts ready'), card(s.sms_providers ?? (s.sms_enabled ? 1 : 0), 'SMS providers'),
+    card(s.gmail_ready, 'Gmail accounts ready'), card(s.smtp_ready || 0, 'SMTP identities ready'),
     card(s.contacts, 'Contacts'), card(s.confirmed, 'Confirmed on lists'),
     card(s.campaigns, 'Campaigns'), card(s.sms_sent || 0, 'SMS sent'),
     card(s.sent, 'Messages sent'),     card(s.queued, 'In queue'),
@@ -181,9 +181,11 @@ views.quota = async () => {
         </tr>`).join('') || '<tr><td colspan="6" class="muted">No Gmail accounts. Add them under Gmail pool.</td></tr>'}
       </table>
       ${q.smtp.length ? `<h2>SMTP identities</h2>
-        <table><tr><th>Label</th><th>From</th><th>Host</th><th>Today</th><th>Remaining</th></tr>
+        <table><tr><th>Label</th><th>From</th><th>Host</th><th>SOCKS5</th><th>Today</th><th>Remaining</th></tr>
         ${q.smtp.map((s) => `<tr><td>${esc(s.label)}</td><td>${esc(s.from_email)}</td>
-          <td class="mono small">${esc(s.host)}</td><td>${s.sent_today}</td><td>${s.remaining_today}</td></tr>`).join('')}
+          <td class="mono small">${esc(s.host)}</td>
+          <td class="mono small">${esc(s.socks5 || '—')}</td>
+          <td>${s.sent_today}</td><td>${s.remaining_today}</td></tr>`).join('')}
         </table>` : ''}
 
       <h2>SMS — Twilio &amp; other APIs</h2>
@@ -462,7 +464,7 @@ views.campaigns = async () => {
   ]);
   const gmailPool = gmail.pool || [];
   view(`<div class="page-head"><h1>RFQ campaigns</h1></div>
-    <p class="sub">Personalize with placeholders. Rotate the Gmail pool, or send from one identity. Unsubscribe + physical address are added automatically.</p>
+    <p class="sub">Personalize with placeholders. Rotate the Gmail pool, or send from one SMTP identity (SES, SendGrid, Mailchimp, Japan SMTP + SOCKS5). Unsubscribe + physical address are added automatically.</p>
     <div class="notice">Click a placeholder to insert it into the last field you focused.</div>
     ${placeholderChips(PH)}
     <div class="row" style="margin-bottom:12px">
@@ -478,7 +480,11 @@ views.campaigns = async () => {
         </select></div>
       <div class="field"><label>Single sender</label><select name="sender_id">
         <option value="">— none / pool —</option>
-        ${senders.map((s) => `<option value="${s.id}" ${s.verified ? '' : 'disabled'}>${esc(s.label)}${s.verified ? '' : ' (unverified)'}</option>`).join('')}
+        ${senders.map((s) => {
+          const via = s.socks5_host ? ` · SOCKS5 ${s.socks5_host}` : '';
+          const kind = s.kind === 'gmail' ? 'Gmail' : (s.provider || s.kind || 'smtp');
+          return `<option value="${s.id}" ${s.verified ? '' : 'disabled'}>${esc(s.label)} · ${esc(kind)}${esc(via)}${s.verified ? '' : ' (unverified)'}</option>`;
+        }).join('')}
       </select></div>
       <div class="field"><label>List</label><select name="list_id" required>
         <option value="">— choose —</option>
@@ -826,37 +832,88 @@ views.contacts = async () => {
 };
 
 views.senders = async () => {
-  view(`<div class="page-head"><h1>SMTP sender identities</h1></div>
-    <p class="sub">Non-Gmail SMTP (your own domain). For Gmail app passwords use <b>Gmail pool</b>.</p>
+  const catalog = await api('/api/senders/catalog');
+  const groups = catalog.groups || [];
+  const allPresets = groups.flatMap((g) => (g.providers || []).map((p) => ({ ...p, group: g.id })));
+  view(`<div class="page-head"><h1>Email SMTP</h1></div>
+    <p class="sub">AWS SES, SendGrid, Mailchimp (Mandrill), Mailgun, Postmark, SparkPost, Brevo, Mailjet, Microsoft 365, and Japan-region SMTP. Optional <b>SOCKS5</b> tunnels the SMTP connection through a Japanese VPS you operate — one proxy per identity, not a rotating list. Gmail app passwords still live under Gmail pool.</p>
+    <div class="tabs">
+      <button class="active" data-tab="esp">AWS / SendGrid / Mailchimp</button>
+      <button data-tab="japan">Japan SMTP + SOCKS5</button>
+    </div>
     <form id="sender-form" class="form-grid">
-      <div class="field"><label>Label</label><input name="label" required placeholder="Marketing mailbox"></div>
-      <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="hello@yourdomain.com"></div>
+      <div class="field full"><label>Provider preset</label>
+        <select name="catalog_id" id="smtp-preset">
+          ${groups.map((g) => `<optgroup label="${esc(g.label)}">${
+            (g.providers || []).map((p) => `<option value="${esc(p.id)}" data-group="${esc(g.id)}">${esc(p.label)}</option>`).join('')
+          }</optgroup>`).join('')}
+        </select></div>
+      <div class="field"><label>Label</label><input name="label" required placeholder="Quotes via SES Tokyo"></div>
+      <div class="field"><label>From email</label><input name="from_email" type="email" required placeholder="quotes@yourdomain.com"></div>
       <div class="field"><label>From name</label><input name="from_name" placeholder="Your Company"></div>
-      <div class="field"><label>SMTP host</label><input name="host" required placeholder="smtp.yourprovider.com"></div>
-      <div class="field"><label>Port</label><input name="port" type="number" value="587"></div>
-      <div class="field"><label>Secure (TLS on connect)</label><select name="secure"><option value="false">No (STARTTLS)</option><option value="true">Yes (465)</option></select></div>
-      <div class="field"><label>Username</label><input name="username" required></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required></div>
-      <div class="actions full"><button type="submit">Add identity</button></div>
+      <div class="field"><label>SMTP host</label><input name="host" id="smtp-host" required></div>
+      <div class="field"><label>Port</label><input name="port" id="smtp-port" type="number" value="587"></div>
+      <div class="field"><label>TLS</label><select name="secure" id="smtp-secure"><option value="false">STARTTLS (587)</option><option value="true">TLS on connect (465)</option></select></div>
+      <div class="field"><label>Username</label><input name="username" id="smtp-user" required></div>
+      <div class="field"><label>Password / API key</label><input name="password" type="password" required autocomplete="off"></div>
+      <div class="field"><label>Daily cap</label><input name="daily_limit" type="number" value="500"></div>
+      <p class="help full" id="smtp-hint"></p>
+      <div class="socks-box" id="socks-box">
+        <h2 class="full" id="socks-head">SOCKS5 — Japan path</h2>
+        <p class="help full">Typical Japan send-out: SOCKS5 on a VPS in Tokyo/Osaka you operate, SMTP = SES Tokyo, Sakura, Lolipop, Xserver, or MuuMuu. Host or IP only — no proxy lists, no rotation farms.</p>
+        <div class="field"><label>SOCKS5 host</label><input name="socks5_host" placeholder="203.0.113.10 or socks.your-vps.jp"></div>
+        <div class="field"><label>SOCKS5 port</label><input name="socks5_port" type="number" value="1080"></div>
+        <div class="field"><label>SOCKS5 user</label><input name="socks5_user" autocomplete="off"></div>
+        <div class="field"><label>SOCKS5 password</label><input name="socks5_pass" type="password" autocomplete="off"></div>
+      </div>
+      <div class="actions full"><button type="submit">Add &amp; save</button></div>
     </form>
     <table id="sender-table"></table>`);
+
+  const applyPreset = () => {
+    const id = $('smtp-preset').value;
+    const p = allPresets.find((x) => x.id === id);
+    if (!p) return;
+    if (p.host) $('smtp-host').value = p.host;
+    else if (!p.host) $('smtp-host').value = '';
+    $('smtp-port').value = p.port || 587;
+    $('smtp-secure').value = p.secure ? 'true' : 'false';
+    if (p.defaultUsername) $('smtp-user').value = p.defaultUsername;
+    $('smtp-hint').textContent = `${p.usernameHint || ''} · ${p.passwordHint || ''}`;
+    $('socks-box').classList.toggle('hot', p.group === 'japan');
+  };
+  applyPreset();
+  $('smtp-preset').addEventListener('change', applyPreset);
+  $('view').querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+    $('view').querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
+    const group = b.dataset.tab;
+    const first = allPresets.find((p) => p.group === group);
+    if (first) { $('smtp-preset').value = first.id; applyPreset(); }
+    $('socks-box').classList.toggle('hot', group === 'japan');
+    if (group === 'japan') $('socks-box').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }));
+
   $('sender-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const b = formBody(e.target);
-    b.secure = b.secure === 'true'; b.port = parseInt(b.port, 10);
-    try { await api('/api/senders', { method: 'POST', body: b }); e.target.reset(); toast('Identity added'); views.senders(); }
+    b.secure = b.secure === 'true';
+    b.port = parseInt(b.port, 10);
+    b.socks5_port = b.socks5_port ? parseInt(b.socks5_port, 10) : 1080;
+    b.daily_limit = parseInt(b.daily_limit, 10);
+    try { await api('/api/senders', { method: 'POST', body: b }); toast('SMTP identity saved'); views.senders(); }
     catch (err) { toast(err.message, 'err'); }
   });
   const rows = (await api('/api/senders')).filter((s) => s.kind !== 'gmail');
-  $('sender-table').innerHTML = `<tr><th>Label</th><th>From</th><th>Host</th><th>Kind</th><th>Status</th><th></th></tr>` +
+  $('sender-table').innerHTML = `<tr><th>Label</th><th>From</th><th>Host</th><th>Provider</th><th>SOCKS5</th><th>Status</th><th></th></tr>` +
     (rows.map((s) => `<tr>
       <td>${esc(s.label)}</td><td>${esc(s.from_name)} &lt;${esc(s.from_email)}&gt;</td>
       <td class="mono small">${esc(s.host)}:${s.port}</td>
-      <td>${esc(s.kind || 'smtp')}</td>
+      <td>${esc(s.provider || s.kind || 'smtp')}${s.region ? ` · ${esc(s.region)}` : ''}</td>
+      <td class="mono small">${s.socks5_host ? `${esc(s.socks5_host)}:${s.socks5_port || 1080}` : '—'}</td>
       <td>${s.verified ? badge('verified') : badge('pending')}</td>
       <td><button class="tiny secondary" data-v="${s.id}">Verify</button>
           <button class="tiny danger" data-d="${s.id}">Delete</button></td></tr>`).join('')
-      || `<tr><td colspan="6" class="muted">No identities yet.</td></tr>`);
+      || `<tr><td colspan="7" class="muted">No SMTP identities yet.</td></tr>`);
   $('sender-table').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', async () => {
     try { await api(`/api/senders/${b.dataset.v}/verify`, { method: 'POST' }); toast('Verified ✓'); views.senders(); }
     catch (err) { toast(err.message, 'err'); }
