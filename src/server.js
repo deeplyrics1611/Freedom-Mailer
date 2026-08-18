@@ -20,6 +20,7 @@ import publicRoutes from './routes/public.js';
 import gmailRoutes from './routes/gmail.js';
 import toolsRoutes from './routes/tools.js';
 import smsRoutes from './routes/sms.js';
+import quotaRoutes from './routes/quota.js';
 import { smsEnabled } from './sms.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -101,6 +102,7 @@ app.use('/api/campaigns', campaignRoutes);
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/tools', toolsRoutes);
 app.use('/api/sms', smsRoutes);
+app.use('/api/quota', quotaRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

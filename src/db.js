@@ -190,6 +190,7 @@ addColumn('users', 'physical_address', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'sender_title', "TEXT NOT NULL DEFAULT ''");
 
 addColumn('messages', 'sms_provider_id', 'INTEGER');
+addColumn('messages', 'api_key_id', 'INTEGER');
 addColumn('campaigns', 'channel', "TEXT NOT NULL DEFAULT 'email'");
 addColumn('campaigns', 'sms_provider_id', 'INTEGER');
 

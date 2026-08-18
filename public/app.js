@@ -40,6 +40,7 @@ $('logout').addEventListener('click', logout);
 
 const NAV = [
   ['dashboard', 'Dashboard'],
+  ['quota', 'Quotas & usage'],
   ['gmail', 'Gmail pool'],
   ['sms', 'SMS'],
   ['campaigns', 'RFQ campaigns'],
@@ -127,9 +128,109 @@ views.dashboard = async () => {
     card(s.gmail_ready, 'Gmail accounts ready'), card(s.sms_providers ?? (s.sms_enabled ? 1 : 0), 'SMS providers'),
     card(s.contacts, 'Contacts'), card(s.confirmed, 'Confirmed on lists'),
     card(s.campaigns, 'Campaigns'), card(s.sms_sent || 0, 'SMS sent'),
-    card(s.sent, 'Messages sent'), card(s.queued, 'In queue'),
+    card(s.sent, 'Messages sent'),     card(s.queued, 'In queue'),
     card(s.failed, 'Failed'), card(s.suppressed, 'Suppressed'),
   ].join('');
+};
+
+views.quota = async () => {
+  view(`<div class="page-head"><h1>Quotas &amp; usage</h1>
+    <button class="tiny secondary" id="q-refresh">Refresh live lookup</button></div>
+    <p class="sub">Looks up remaining send capacity for email (Gmail pool / SMTP) and SMS (Twilio and other gateways), plus QuoteMail API key usage. Live balances come from each provider’s API using the keys you saved.</p>
+    <div id="q-body"><p class="muted">Loading…</p></div>`);
+  $('q-refresh').addEventListener('click', views.quota);
+  try {
+    const q = await api('/api/quota');
+    const a = q.account;
+    const pct = a.daily_quota ? Math.min(100, Math.round((a.used_today / a.daily_quota) * 100)) : 0;
+    const meter = pct >= 90 ? 'err' : pct >= 70 ? 'warn' : '';
+    const money = (p) => {
+      if (p.balance == null && p.cash_credits == null) return '—';
+      const v = p.balance != null ? p.balance : p.cash_credits;
+      return `${esc(v)}${p.currency ? ` ${esc(p.currency)}` : ''}`;
+    };
+    const usage = (u) => u ? `${u.count || 0}${u.price != null ? ` · ${esc(u.price)}` : ''}` : '—';
+
+    $('q-body').innerHTML = `
+      <h2>This account (email + SMS)</h2>
+      <div class="card">
+        <div class="score-big">${a.remaining_today}</div>
+        <div class="stat-label">remaining of ${a.daily_quota} daily quota</div>
+        <div class="meter ${meter}"><span style="width:${pct}%"></span></div>
+        <p class="help">Used today ${a.used_today} · email sent ${a.email_today} · SMS sent ${a.sms_today} · failed ${a.failed_today}
+        · this month email ${a.email_month} / SMS ${a.sms_month}
+        · queued email ${a.email_queued} / SMS ${a.sms_queued}</p>
+      </div>
+
+      <h2>Email — Gmail pool</h2>
+      <p class="help">${esc(q.gmail.note)}</p>
+      <div class="cards">
+        <div class="card"><div class="stat">${q.gmail.remaining_today}</div><div class="stat-label">Gmail remaining today</div></div>
+        <div class="card"><div class="stat">${q.gmail.accounts_ready}</div><div class="stat-label">Mailboxes ready</div></div>
+        <div class="card"><div class="stat">${q.gmail.verified}</div><div class="stat-label">Verified</div></div>
+      </div>
+      <table>
+        <tr><th>Mailbox</th><th>Today</th><th>Remaining</th><th>Cap</th><th>Rotation</th><th>Last used</th></tr>
+        ${(q.gmail.accounts || []).map((s) => `<tr>
+          <td><b>${esc(s.label)}</b><div class="mono small">${esc(s.email)}</div></td>
+          <td>${s.sent_today}</td>
+          <td><b>${s.remaining_today}</b></td>
+          <td>${s.daily_limit}</td>
+          <td>${s.in_rotation && s.verified ? badge('verified') : badge('pending')}</td>
+          <td class="muted small">${esc(s.last_used_at || '—')}</td>
+        </tr>`).join('') || '<tr><td colspan="6" class="muted">No Gmail accounts. Add them under Gmail pool.</td></tr>'}
+      </table>
+      ${q.smtp.length ? `<h2>SMTP identities</h2>
+        <table><tr><th>Label</th><th>From</th><th>Host</th><th>Today</th><th>Remaining</th></tr>
+        ${q.smtp.map((s) => `<tr><td>${esc(s.label)}</td><td>${esc(s.from_email)}</td>
+          <td class="mono small">${esc(s.host)}</td><td>${s.sent_today}</td><td>${s.remaining_today}</td></tr>`).join('')}
+        </table>` : ''}
+
+      <h2>SMS — Twilio &amp; other APIs</h2>
+      <p class="help">Live lookup uses the Account SID / API key you saved (or <span class="mono">TWILIO_*</span> in .env). Secrets are masked.</p>
+      ${(q.sms_providers || []).map((p) => `<div class="card" style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div><b>${esc(p.label)}</b> ${badge(p.ok ? 'verified' : 'failed')}
+            <span class="muted small">${esc(p.provider)}${p.system ? ' · .env' : ''}</span>
+            ${p.console_url ? ` · <a href="${esc(p.console_url)}" target="_blank" rel="noopener">console</a>` : ''}
+          </div>
+          <div class="stat">${money(p)}</div>
+        </div>
+        ${p.error ? `<div class="issue high" style="margin-top:8px">${esc(p.error)}</div>` : ''}
+        ${p.note ? `<p class="help">${esc(p.note)}</p>` : ''}
+        <table style="margin-top:10px">
+          <tr><th>Key</th><th>Status</th><th>From</th><th>SMS today (provider)</th><th>SMS month</th><th>Local today</th></tr>
+          <tr>
+            <td class="mono small">${esc(p.key_masked || '—')}</td>
+            <td>${esc(p.status || p.type || (p.live ? 'live' : 'local'))}${p.friendly_name ? ` · ${esc(p.friendly_name)}` : ''}</td>
+            <td class="mono small">${esc(p.from_number || '—')}</td>
+            <td>${usage(p.sms_today)}</td>
+            <td>${usage(p.sms_month)}</td>
+            <td>${p.local ? `${p.local.sent_today} sent / ${p.local.queued} queued / ${p.local.failed_today} failed` : '—'}</td>
+          </tr>
+        </table>
+        ${p.numbers?.length ? `<p class="help" style="margin-top:8px">Numbers: ${p.numbers.map((n) => esc(n.phone || n.msisdn || '')).filter(Boolean).join(', ')}</p>` : ''}
+        ${p.messaging_service_sid ? `<p class="help">Messaging Service ${esc(p.messaging_service_sid)}</p>` : ''}
+      </div>`).join('') || '<div class="notice">No SMS providers yet. Add Twilio (Account SID + Auth Token) under SMS, or set TWILIO_* in .env.</div>'}
+
+      <h2>QuoteMail API keys</h2>
+      <p class="help">Keys for <code>POST /api/v1/email</code> and <code>POST /api/v1/sms</code>. Usage is counted after this update; older sends may show as unattributed.
+      Quota for a key: <code>GET /api/v1/quota</code> with header <code>X-API-Key</code>.</p>
+      <table>
+        <tr><th>Name</th><th>Prefix</th><th>Today</th><th>Email</th><th>SMS</th><th>All sends</th><th>Last used</th><th></th></tr>
+        ${(q.api_keys.keys || []).map((k) => `<tr>
+          <td>${esc(k.name)}</td>
+          <td class="mono">${esc(k.key_prefix)}…</td>
+          <td>${k.today}</td><td>${k.email}</td><td>${k.sms}</td><td>${k.sends}</td>
+          <td class="muted small">${esc(k.last_used || 'never')}</td>
+          <td>${k.revoked ? badge('failed') : badge('confirmed')}</td>
+        </tr>`).join('') || '<tr><td colspan="8" class="muted">No API keys. Create one under API keys.</td></tr>'}
+      </table>
+      ${q.api_keys.unattributed_sends ? `<p class="help">${q.api_keys.unattributed_sends} older API send(s) are not tied to a key.</p>` : ''}
+      <p class="muted small">Fetched ${esc(q.fetched_at)}</p>`;
+  } catch (err) {
+    $('q-body').innerHTML = `<div class="issue high">${esc(err.message)}</div>`;
+  }
 };
 
 views.gmail = async () => {

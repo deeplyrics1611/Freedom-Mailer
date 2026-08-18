@@ -15,6 +15,7 @@ This is for mailboxes **you control**. Gmail’s consumer terms are not a bulk E
 - **Lead validation** — Debounce-style scoring: syntax, typos, disposable domains, role accounts, **MX**. Optional SMTP `RCPT TO` probe if outbound port 25 is open. Corporate MX with no risk flags scores **99**.
 - **CSV import** — `email,first_name,last_name,company,title,phone`. Undeliverable leads are skipped at send time.
 - **SMS** — Twilio (`TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`) plus Vonage, MessageBird, Plivo, Telnyx, Infobip, ClickSend, Sinch, Twilio-compatible APIs, or a custom HTTPS webhook. Panel + `POST /api/v1/sms`.
+- **Quotas & usage** — live lookup of Twilio (and other gateway) balance, SMS usage today/month, numbers on the account; Gmail/SMTP remaining caps; QuoteMail API key send counts. Also `GET /api/v1/quota`.
 
 ## Quick start
 
@@ -79,7 +80,8 @@ src/
   inbox.js          Placement estimate + IMAP probe
   validate.js       MX / disposable / role scoring
   sms.js            Multi-provider SMS (Twilio, Vonage, …)
-  routes/sms.js     SMS panel + list sends
+  quota.js          Live Twilio/gateway balance + email caps
+  routes/quota.js   Quotas panel API
   queue.js          Rate-limited sender
   routes/gmail.js   Pool CRUD
   routes/tools.js   Preview, spam, links, validate

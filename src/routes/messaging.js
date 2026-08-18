@@ -4,6 +4,7 @@ import { requireApiKey } from '../auth.js';
 import { isSuppressed } from '../compliance.js';
 import { smsEnabled, systemProvider, normalizePhone, withSmsOptOut } from '../sms.js';
 import { resolveSmsProvider } from './sms.js';
+import { buildQuotaReport } from '../quota.js';
 
 // Transactional sending API. Authenticated with X-API-Key.
 // Transactional mail (password resets, receipts, etc.) is one-to-one and
@@ -46,10 +47,10 @@ router.post('/email', (req, res) => {
 
   const info = db
     .prepare(
-      `INSERT INTO messages (user_id, channel, sender_id, to_address, subject, html, text, status, source)
-       VALUES (?, 'email', ?, ?, ?, ?, ?, 'queued', 'api')`
+      `INSERT INTO messages (user_id, channel, sender_id, to_address, subject, html, text, status, source, api_key_id)
+       VALUES (?, 'email', ?, ?, ?, ?, ?, 'queued', 'api', ?)`
     )
-    .run(req.user.id, senderId, addr, subject, html, text);
+    .run(req.user.id, senderId, addr, subject, html, text, req.apiKey?.id || null);
   res.status(202).json({ id: info.lastInsertRowid, status: 'queued' });
 });
 
@@ -75,11 +76,19 @@ router.post('/sms', (req, res) => {
   const text = opt_out ? withSmsOptOut(body) : String(body);
   const info = db
     .prepare(
-      `INSERT INTO messages (user_id, channel, to_address, text, status, source, sms_provider_id)
-       VALUES (?, 'sms', ?, ?, 'queued', 'api', ?)`
+      `INSERT INTO messages (user_id, channel, to_address, text, status, source, sms_provider_id, api_key_id)
+       VALUES (?, 'sms', ?, ?, 'queued', 'api', ?, ?)`
     )
-    .run(req.user.id, dest, text, provider.id || null);
+    .run(req.user.id, dest, text, provider.id || null, req.apiKey?.id || null);
   res.status(202).json({ id: info.lastInsertRowid, status: 'queued', to: dest });
+});
+
+router.get('/quota', async (req, res) => {
+  try {
+    res.json(await buildQuotaReport(req.user));
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
 });
 
 // GET /api/v1/messages/:id  — delivery status lookup

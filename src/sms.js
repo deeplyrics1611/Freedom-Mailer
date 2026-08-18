@@ -188,6 +188,8 @@ function creds(p) {
   };
 }
 
+export { creds as providerCreds };
+
 function assertPublicHttps(url) {
   let u;
   try { u = new URL(url); } catch { throw new Error('Invalid SMS webhook URL'); }
