@@ -37,7 +37,7 @@ body::before {
 }
 
 /* Phoenix fire + world FX */
-.fx-world, .fx-fire, .fx-scan, .fx-phoenix { position: fixed; pointer-events: none; z-index: 0; }
+.fx-world, .fx-fire, .fx-scan, .fx-phoenix, .fx-phone { position: fixed; pointer-events: none; z-index: 0; }
 .fx-world {
   inset: auto; top: 8%; right: -8%; width: min(52vw, 640px); height: min(52vw, 640px);
   color: rgba(255, 0, 0, .28);
@@ -71,9 +71,19 @@ body::before {
   opacity: .55;
 }
 @keyframes spin-globe { to { transform: rotate(360deg); } }
+.fx-phone {
+  right: 4%; bottom: 8%; width: min(22vw, 180px); height: auto;
+  color: rgba(225, 6, 0, .42);
+  filter: drop-shadow(0 0 22px #ff0000);
+  animation: phone-pulse 3.6s ease-in-out infinite;
+}
 @keyframes phoenix-breathe {
   0%, 100% { transform: translateY(0) scale(1); opacity: .85; }
   50% { transform: translateY(-10px) scale(1.04); opacity: 1; }
+}
+@keyframes phone-pulse {
+  0%, 100% { transform: translateY(0) rotate(-8deg); opacity: .8; }
+  50% { transform: translateY(-8px) rotate(-6deg); opacity: 1; }
 }
 @keyframes fire-flicker {
   0%, 100% { opacity: .75; }
@@ -105,6 +115,13 @@ a, .link {
   color: var(--text); text-shadow: 0 0 16px rgba(255, 0, 0, .85);
 }
 .login-card .brand::before { content: "> "; color: var(--accent); }
+.logo-phone-row { display: flex; align-items: center; gap: 8px; }
+.logo-phone, .nav-phone, .page-phone { flex-shrink: 0; display: block; }
+.logo-phone { width: 18px; height: 18px; }
+.nav-phone { width: 15px; height: 15px; }
+.page-phone { width: 32px; height: 32px; filter: drop-shadow(0 0 8px #ff0000); }
+#nav a.has-phone::before { content: none; width: 0; }
+#nav a.has-phone { gap: 8px; }
 input, select, textarea {
   background: var(--ink); border: 1px solid var(--border); color: var(--text);
   padding: 10px 12px; border-radius: var(--radius); font: inherit; width: 100%;
@@ -160,6 +177,7 @@ h1, h2 { font-family: var(--display); letter-spacing: .08em; text-transform: upp
 h1 { font-size: 22px; margin: 0 0 4px; color: var(--text); text-shadow: 0 0 12px rgba(255, 0, 0, .55); }
 h2 { font-size: 13px; margin: 24px 0 12px; color: var(--accent); }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.page-head h1.logo-phone-row { display: flex; align-items: center; gap: 10px; }
 .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
 
 /* Cards / grid */

@@ -60,7 +60,10 @@ const ADMIN_NAV = [['users', 'Users (admin)']];
 function renderNav() {
   const items = [...NAV, ...(state.user.role === 'admin' ? ADMIN_NAV : [])];
   $('nav').innerHTML = items
-    .map(([r, label]) => `<a data-route="${r}" class="${r === state.route ? 'active' : ''}">${label}</a>`)
+    .map(([r, label]) => {
+      const phone = r === 'sms' ? '<img class="nav-phone" src="/phone.svg" alt="">' : '';
+      return `<a data-route="${r}" class="${r === state.route ? 'active' : ''}${r === 'sms' ? ' has-phone' : ''}">${phone}${label}</a>`;
+    })
     .join('');
   $('nav').querySelectorAll('a').forEach((a) =>
     a.addEventListener('click', () => go(a.dataset.route)));
@@ -326,7 +329,7 @@ views.sms = async () => {
     }</div>`;
   }).join('');
 
-  view(`<div class="page-head"><h1>SMS</h1></div>
+  view(`<div class="page-head"><h1 class="logo-phone-row"><img class="page-phone" src="/phone.svg" alt=""> SMS</h1></div>
     <p class="sub">Send texts through <b>Twilio</b> (<span class="mono">TWILIO_ACCOUNT_SID</span> / <span class="mono">TWILIO_AUTH_TOKEN</span>) or another gateway. Add providers here, or set env vars on the server.</p>
     ${data.system ? `<div class="notice">System provider from .env: <b>${esc(data.system.label)}</b> · from ${esc(data.system.from_number || '—')}</div>` : '<div class="notice">No .env Twilio/Vonage yet. Add a provider below (Twilio Account SID + Auth Token is the usual setup).</div>'}
     <h2>Providers</h2>
