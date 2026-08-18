@@ -85,3 +85,30 @@ tr:last-child td { border-bottom: none; }
 code { background: var(--panel2); padding: 2px 6px; border-radius: 5px; font-size: 13px; }
 pre { background: var(--panel2); padding: 14px; border-radius: 8px; overflow: auto; font-size: 13px; }
 .mono { font-family: ui-monospace, monospace; }
+
+.tabs { display: flex; gap: 6px; margin: 0 0 16px; flex-wrap: wrap; }
+.tabs button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
+.tabs button.active { background: var(--accent); color: #fff; border-color: transparent; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+button.chip { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer; font-family: ui-monospace, monospace; font-weight: 500; }
+.chip:hover { border-color: var(--accent); color: #fff; }
+.meter { height: 10px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin: 8px 0 4px; }
+.meter > span { display: block; height: 100%; background: var(--ok); }
+.meter.warn > span { background: var(--warn); }
+.meter.err > span { background: var(--err); }
+.issues { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.issue { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+.issue.high { border-left: 3px solid var(--err); }
+.issue.medium { border-left: 3px solid var(--warn); }
+.issue.low { border-left: 3px solid var(--muted); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 960px) {
+  .split { grid-template-columns: 1fr; }
+  #app { grid-template-columns: 1fr; }
+}
+.preview-box { background: #fff; color: #222; padding: 16px; border-radius: 8px; min-height: 120px; font-size: 14px; }
+.score-big { font-size: 42px; font-weight: 800; letter-spacing: -0.03em; }
+.help { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.ol { margin: 8px 0 0 18px; padding: 0; color: var(--muted); font-size: 13px; }
+.login-card { width: 380px; }

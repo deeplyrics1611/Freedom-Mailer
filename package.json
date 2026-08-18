@@ -1,13 +1,14 @@
 {
   "name": "freedom-mailer",
   "version": "1.0.0",
-  "description": "A compliant multi-channel messaging platform: email (SMTP + API) and SMS with an admin/user panel, opt-in list management, unsubscribe handling, and suppression lists.",
+  "description": "Gmail app-password RFQ campaign sender with personalization, pool rotation, inbox/spam/link checks, and MX lead validation.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20"
@@ -20,7 +21,8 @@
     "express-rate-limit": "^7.4.0",
     "jsonwebtoken": "^9.0.2",
     "nanoid": "^5.0.7",
-    "nodemailer": "^6.9.15"
+    "nodemailer": "^6.9.15",
+    "imapflow": "^1.0.164"
   },
   "license": "MIT"
 }

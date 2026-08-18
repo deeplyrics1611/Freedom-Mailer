@@ -43,7 +43,8 @@ router.get('/:id/subscribers', (req, res) => {
   if (!list) return res.status(404).json({ error: 'Not found' });
   const rows = db
     .prepare(
-      `SELECT c.id AS contact_id, c.email, c.name, s.status, s.confirmed_at, s.created_at
+      `SELECT c.id AS contact_id, c.email, c.name, c.first_name, c.last_name, c.company, c.title,
+              c.validation_status, c.validation_score, s.status, s.confirmed_at, s.created_at
        FROM subscriptions s JOIN contacts c ON c.id = s.contact_id
        WHERE s.list_id = ? ORDER BY s.created_at DESC`
     )
@@ -60,16 +61,38 @@ router.post('/:id/subscribe', (req, res) => {
   const list = db.prepare('SELECT * FROM lists WHERE id = ? AND user_id = ?').get(listId, req.user.id);
   if (!list) return res.status(404).json({ error: 'Not found' });
 
-  const { email, name = '', phone = '', consent_ip = '', preConfirmed = false } = req.body || {};
+  const { email, name = '', phone = '', first_name = '', last_name = '', company = '', title = '', consent_ip = '', preConfirmed = false } = req.body || {};
   if (!email) return res.status(400).json({ error: 'Email required' });
   const addr = String(email).toLowerCase();
 
   let contact = db.prepare('SELECT * FROM contacts WHERE user_id = ? AND email = ?').get(req.user.id, addr);
   if (!contact) {
     const info = db
-      .prepare('INSERT INTO contacts (user_id, email, name, phone) VALUES (?, ?, ?, ?)')
-      .run(req.user.id, addr, name, phone);
+      .prepare(
+        `INSERT INTO contacts (user_id, email, name, first_name, last_name, company, title, phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        req.user.id,
+        addr,
+        name || [first_name, last_name].filter(Boolean).join(' '),
+        first_name,
+        last_name,
+        company,
+        title,
+        phone
+      );
     contact = { id: info.lastInsertRowid };
+  } else if (first_name || last_name || company || title || name) {
+    db.prepare(
+      `UPDATE contacts SET
+         name = COALESCE(NULLIF(?, ''), name),
+         first_name = COALESCE(NULLIF(?, ''), first_name),
+         last_name = COALESCE(NULLIF(?, ''), last_name),
+         company = COALESCE(NULLIF(?, ''), company),
+         title = COALESCE(NULLIF(?, ''), title)
+       WHERE id = ?`
+    ).run(name, first_name, last_name, company, title, contact.id);
   }
 
   const token = newToken();

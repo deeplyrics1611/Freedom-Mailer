@@ -1,6 +1,7 @@
 import { customAlphabet } from 'nanoid';
 import { config } from './config.js';
 import { db } from './db.js';
+export { renderTemplate, contactVars, extractPlaceholders } from './placeholders.js';
 
 const genToken = customAlphabet('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', 32);
 export const newToken = () => genToken();
@@ -29,15 +30,19 @@ export function unsubscribeUrl(token) {
 // Inject a required unsubscribe footer + List-Unsubscribe header data.
 // Every marketing email must carry a working one-click unsubscribe (CAN-SPAM,
 // GDPR, RFC 8058). `token` ties the link to a specific subscription.
-export function withUnsubscribeFooter({ html, text }, token) {
+export function withUnsubscribeFooter({ html, text }, token, { physicalAddress = '' } = {}) {
   const link = unsubscribeUrl(token);
+  const addr = physicalAddress
+    ? `<br>${escapeHtml(physicalAddress)}`
+    : '';
+  const addrText = physicalAddress ? `\n${physicalAddress}` : '';
   const footerHtml = `
     <hr style="border:none;border-top:1px solid #ddd;margin:24px 0" />
     <p style="font-size:12px;color:#888">
-      You received this because you confirmed your subscription.
-      <a href="${link}">Unsubscribe</a> at any time.
+      You received this because you were added to an RFQ / mailing list.
+      <a href="${link}">Unsubscribe</a> at any time.${addr}
     </p>`;
-  const footerText = `\n\n---\nYou received this because you confirmed your subscription.\nUnsubscribe: ${link}`;
+  const footerText = `\n\n---\nYou received this because you were added to an RFQ / mailing list.\nUnsubscribe: ${link}${addrText}`;
   return {
     html: (html || '') + footerHtml,
     text: (text || '') + footerText,
@@ -48,10 +53,6 @@ export function withUnsubscribeFooter({ html, text }, token) {
   };
 }
 
-// Simple {{name}} / {{email}} style merge-field substitution.
-export function renderTemplate(str, vars) {
-  if (!str) return str;
-  return str.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) =>
-    vars[k] === undefined || vars[k] === null ? '' : String(vars[k])
-  );
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }

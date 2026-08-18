@@ -17,6 +17,8 @@ import templateRoutes from './routes/templates.js';
 import campaignRoutes from './routes/campaigns.js';
 import messagingRoutes from './routes/messaging.js';
 import publicRoutes from './routes/public.js';
+import gmailRoutes from './routes/gmail.js';
+import toolsRoutes from './routes/tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -60,6 +62,10 @@ app.get('/api/stats', requireAuth, (req, res) => {
     queued: one("SELECT COUNT(*) n FROM messages WHERE user_id = ? AND status='queued'"),
     failed: one("SELECT COUNT(*) n FROM messages WHERE user_id = ? AND status='failed'"),
     suppressed: one('SELECT COUNT(*) n FROM suppressions WHERE user_id = ?'),
+    senders: one('SELECT COUNT(*) n FROM senders WHERE user_id = ?'),
+    gmail_ready: db.prepare(
+      `SELECT COUNT(*) n FROM senders WHERE user_id = ? AND kind='gmail' AND verified=1 AND active=1 AND in_rotation=1`
+    ).get(uid).n,
     sms_enabled: smsEnabled(),
   });
 });
@@ -84,6 +90,8 @@ app.use('/api/lists', listRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/campaigns', campaignRoutes);
+app.use('/api/gmail', gmailRoutes);
+app.use('/api/tools', toolsRoutes);
 
 // Transactional sending API (X-API-Key).
 app.use('/api/v1', apiLimiter, messagingRoutes);

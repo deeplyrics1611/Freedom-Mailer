@@ -1,15 +1,34 @@
 import nodemailer from 'nodemailer';
 import { config } from './config.js';
+import { decryptSecret } from './secrets.js';
+
+function authFor(sender) {
+  if (!sender) return null;
+  return {
+    user: sender.username,
+    pass: decryptSecret(sender.password),
+  };
+}
 
 // Build a nodemailer transport from a stored sender identity, or fall back to
 // the system SMTP credentials in the environment.
 export function transportForSender(sender) {
   if (sender) {
+    const auth = authFor(sender);
+    if (sender.kind === 'gmail' || /gmail\.com$/i.test(sender.host || '')) {
+      return nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        auth,
+      });
+    }
     return nodemailer.createTransport({
       host: sender.host,
       port: sender.port,
       secure: !!sender.secure,
-      auth: { user: sender.username, pass: sender.password },
+      auth,
     });
   }
   const s = config.systemSmtp;
@@ -48,4 +67,20 @@ export async function sendEmail({ sender, to, subject, html, text, headers }) {
     headers: headers || undefined,
   });
   return info.messageId;
+}
+
+export function gmailSenderPayload({ label, email, appPassword, fromName, dailyLimit = 80 }) {
+  const addr = String(email || '').trim().toLowerCase();
+  return {
+    label: label || addr,
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: 0,
+    username: addr,
+    password: appPassword,
+    from_name: fromName || addr.split('@')[0],
+    from_email: addr,
+    kind: 'gmail',
+    daily_limit: dailyLimit,
+  };
 }

@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { sendEmail } from './mailer.js';
 import { sendSms } from './sms.js';
 import { isSuppressed, suppress } from './compliance.js';
+import { pickGmailSender, markSenderUsed } from './rotate.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -41,9 +42,23 @@ async function processMessage(msg) {
     if (msg.channel === 'sms') {
       await sendSms({ to: msg.to_address, body: msg.text || msg.subject || '' });
     } else {
-      const sender = msg.sender_id
+      let sender = msg.sender_id
         ? db.prepare('SELECT * FROM senders WHERE id = ?').get(msg.sender_id)
         : null;
+      if (!sender && msg.campaign_id) {
+        const camp = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(msg.campaign_id);
+        if (camp && camp.rotate_pool) {
+          sender = pickGmailSender(msg.user_id);
+          if (!sender) {
+            db.prepare(
+              `UPDATE messages SET status = 'queued', attempts = MAX(attempts - 1, 0),
+                 error = 'Gmail pool exhausted for today' WHERE id = ?`
+            ).run(msg.id);
+            return;
+          }
+          db.prepare('UPDATE messages SET sender_id = ? WHERE id = ?').run(sender.id, msg.id);
+        }
+      }
       // Rebuild the one-click List-Unsubscribe header for list mail.
       let headers;
       if (msg.unsub_token) {
@@ -61,6 +76,7 @@ async function processMessage(msg) {
         text: msg.text,
         headers,
       });
+      if (sender && sender.id) markSenderUsed(sender.id);
     }
     db.prepare("UPDATE messages SET status = 'sent', error = '', sent_at = datetime('now') WHERE id = ?").run(
       msg.id

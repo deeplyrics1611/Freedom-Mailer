@@ -139,6 +139,54 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_subs_list ON subscriptions(list_id, status);
+
+CREATE TABLE IF NOT EXISTS validations (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email       TEXT NOT NULL,
+  score       INTEGER NOT NULL DEFAULT 0,
+  result      TEXT NOT NULL DEFAULT 'unknown',
+  reasons     TEXT DEFAULT '',
+  flags_json  TEXT DEFAULT '{}',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_validations_user ON validations(user_id, created_at);
 `);
+
+function addColumn(table, column, def) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+  } catch (e) {
+    if (!/duplicate column/i.test(String(e.message || e))) throw e;
+  }
+}
+
+addColumn('senders', 'kind', "TEXT NOT NULL DEFAULT 'smtp'");
+addColumn('senders', 'in_rotation', 'INTEGER NOT NULL DEFAULT 1');
+addColumn('senders', 'daily_limit', 'INTEGER NOT NULL DEFAULT 80');
+addColumn('senders', 'sent_today', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('senders', 'sent_date', "TEXT NOT NULL DEFAULT ''");
+addColumn('senders', 'last_used_at', 'TEXT');
+addColumn('senders', 'active', 'INTEGER NOT NULL DEFAULT 1');
+
+addColumn('contacts', 'first_name', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'last_name', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'company', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'title', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'custom_json', "TEXT NOT NULL DEFAULT '{}'");
+addColumn('contacts', 'validation_status', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'validation_score', 'INTEGER');
+addColumn('contacts', 'validation_reason', "TEXT NOT NULL DEFAULT ''");
+addColumn('contacts', 'validated_at', 'TEXT');
+
+addColumn('campaigns', 'rotate_pool', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('campaigns', 'extra_vars', "TEXT NOT NULL DEFAULT '{}'");
+addColumn('campaigns', 'physical_address', "TEXT NOT NULL DEFAULT ''");
+addColumn('campaigns', 'send_to', "TEXT NOT NULL DEFAULT 'confirmed'");
+addColumn('campaigns', 'template_key', "TEXT NOT NULL DEFAULT ''");
+
+addColumn('users', 'company_name', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'physical_address', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'sender_title', "TEXT NOT NULL DEFAULT ''");
 
 export default db;

@@ -1,104 +1,85 @@
-# Freedom Mailer
+# QuoteMail — Gmail RFQ sender
 
-A **compliant multi-channel messaging platform** — send email (via SMTP and a
-transactional API) and SMS, managed through an admin + user panel. Built for
-**permission-based** sending: double opt-in lists, one-click unsubscribe,
-suppression enforcement, per-user quotas, and sending only from identities you
-own.
+Web app for sending **request-for-quote** campaigns through **Gmail SMTP app passwords**. Add as many Google accounts as you own, rotate them under per-account daily caps, personalize with placeholders, and run inbox / spam / link / MX checks before you send.
 
-> This project intentionally does **not** include proxy rotation, SMTP/IP
-> rotation, or number-rotation features. Those exist to evade spam filters and
-> abuse controls, which is how spam and phishing operations work. Legitimate
-> deliverability comes from sender reputation (SPF/DKIM/DMARC, warmed IPs,
-> opt-in lists) — which is what this platform is built around.
+This is for mailboxes **you control**. Gmail’s consumer terms are not a bulk ESP: keep daily caps conservative (default 80/account), authenticate honestly, and only contact people you have a lawful basis to email (B2B RFQ, existing relationship, or the anti-spam law that applies to you). Every campaign still gets an unsubscribe footer, `List-Unsubscribe`, and a physical address.
 
-## Features
+## What you get
 
-- **Admin & user panel** — role-based (admin/user), per-user daily quotas, account management.
-- **Sender identities (SMTP)** — add credentials for a mailbox/domain you own; each must pass a live `verify()` before it can send.
-- **Transactional API** — `POST /api/v1/email` and `/api/v1/sms`, authenticated with per-user API keys.
-- **Lists with double opt-in** — subscribers are `pending` until they click a confirmation link; only `confirmed` recipients receive campaigns.
-- **One-click unsubscribe** — every campaign email carries an unsubscribe footer and RFC 8058 `List-Unsubscribe` header; unsubscribes auto-add to suppression.
-- **Suppression list** — unsubscribes, complaints and hard bounces are skipped on every send.
-- **Templates & campaigns** — `{{name}}`/`{{email}}` merge fields, draft → queue → send.
-- **Background queue** — rate-limited worker with retries and delivery logging.
-- **SMS channel** — optional, via a Twilio-compatible gateway with consent expected upstream.
+- **Gmail pool** — paste a 16-character app password per account, verify SMTP, pause/resume rotation, set a daily cap.
+- **Rotation** — least-recently-used among verified Gmail identities that still have remaining capacity. No proxies or IP farms.
+- **RFQ campaigns** — starter templates, `{{first_name}}` / `{{company}}` / `{{rfq_item}}` merge fields, live preview.
+- **Inbox placement** — content estimator (Primary vs Promotions vs Spam) plus an optional IMAP probe to INBOX vs Spam on a Gmail you own.
+- **HTML / spam check** — SpamAssassin-style flags (ALL CAPS, shorteners, image-only, hidden text, JS, …).
+- **Link check** — flags shorteners, IP hosts, risky TLDs, redirect chains, dead links — the usual cold-mail landmines.
+- **Lead validation** — Debounce-style scoring: syntax, typos, disposable domains, role accounts, **MX**. Optional SMTP `RCPT TO` probe if outbound port 25 is open. Corporate MX with no risk flags scores **99**.
+- **CSV import** — `email,first_name,last_name,company,title,phone`. Undeliverable leads are skipped at send time.
 
 ## Quick start
 
 ```bash
 npm install
-cp .env.example .env      # then edit secrets & (optionally) SMTP/SMS creds
+cp .env.example .env      # set JWT_SECRET and bootstrap admin
 npm start
 ```
 
-Open <http://localhost:3000> and sign in with the bootstrap admin from your
-`.env` (`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`). Change the
-password immediately under **Account**.
+Open <http://localhost:3000> and sign in with `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`.
 
-Data is stored in a local SQLite file at `data/freedom-mailer.sqlite`.
+1. **Account** — company name + physical mailing address.
+2. **Gmail pool** — add app passwords, click verify.
+3. **Contacts / Lists** — import CSV.
+4. **Lead validation** — paste the list, drop undeliverable rows.
+5. **Deliverability** — paste the RFQ HTML, run spam + link + inbox checks.
+6. **RFQ campaigns** — load a template, personalize, rotate pool, send.
+
+## Gmail app passwords
+
+1. Enable 2-Step Verification on the Google account.
+2. [Create an app password](https://myaccount.google.com/apppasswords).
+3. Paste it into **Gmail pool**. Username is the full address (`you@gmail.com` or your Workspace domain). SMTP is `smtp.gmail.com:587` (STARTTLS).
+
+App passwords are encrypted at rest (AES-256-GCM using `JWT_SECRET`).
+
+## Placeholders
+
+`{{first_name}}` `{{last_name}}` `{{name}}` `{{email}}` `{{company}}` `{{title}}` `{{phone}}`  
+`{{sender_name}}` `{{sender_email}}` `{{sender_company}}` `{{sender_title}}`  
+`{{rfq_item}}` `{{rfq_qty}}` `{{rfq_needed_by}}` `{{physical_address}}` `{{today}}`
 
 ## Configuration
 
-All settings live in `.env` (see `.env.example`). Key ones:
+See `.env.example`. Notable:
 
 | Variable | Purpose |
 |---|---|
-| `APP_BASE_URL` | Public URL used to build confirm/unsubscribe links |
-| `JWT_SECRET` | Signing secret for panel sessions — set a long random value |
+| `APP_BASE_URL` | Public URL for unsubscribe/confirm links |
+| `JWT_SECRET` | Session + secret-encryption key |
 | `GLOBAL_RATE_PER_MINUTE` | Worker send-rate cap |
-| `REQUIRE_DOUBLE_OPT_IN` | When true, campaigns only reach `confirmed` subscribers |
-| `SMTP_*` | Optional system/fallback SMTP identity |
-| `TWILIO_*` | Optional SMS gateway credentials |
+| `REQUIRE_DOUBLE_OPT_IN` | When true, “confirmed only” campaigns skip pending leads |
 
-## Sending flow (email)
-
-1. Add and **verify** a sender identity (or configure system SMTP).
-2. Create a **list** and add subscribers → they get a **confirm link**.
-3. Once confirmed, create a **campaign** targeting that list and hit **Send**.
-4. The worker enqueues one message per confirmed, non-suppressed subscriber,
-   injects the unsubscribe footer/header, and delivers at the configured rate.
-
-## Transactional API
+## Tests
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/email \
-  -H "X-API-Key: fm_xxxxxxxx" \
-  -H "Content-Type: application/json" \
-  -d '{"to":"user@example.com","subject":"Your receipt","html":"<p>Thanks!</p>"}'
+npm test
 ```
-
-Transactional sends bypass list opt-in (they are one-to-one, recipient-initiated
-mail like receipts and password resets) but still respect the **suppression
-list** and **daily quota**. Delivery status: `GET /api/v1/messages/:id`.
-
-## Compliance notes
-
-This tool is for sending mail people asked to receive. To stay lawful
-(CAN-SPAM, GDPR/PECR, CASL) and deliverable:
-
-- Only import contacts you have consent to email; keep proof of opt-in.
-- Authenticate your domain with **SPF, DKIM, and DMARC**.
-- Honour unsubscribes promptly (this app does so automatically).
-- Don't send to purchased/scraped lists.
 
 ## Architecture
 
 ```
 src/
-  server.js        Express app, bootstrap admin, route wiring, worker start
-  config.js        Env-driven config
-  db.js            SQLite schema (better-sqlite3)
-  auth.js          Passwords, JWT, API-key auth middleware
-  compliance.js    Opt-in tokens, suppression, unsubscribe footer/header, merge fields
-  mailer.js        Nodemailer transports + SMTP verify
-  sms.js           Twilio-compatible SMS sender
-  queue.js         Background worker (rate limit, retries, bounce auto-suppress)
-  routes/          auth, users, apikeys, senders, lists, contacts, templates,
-                   campaigns, messaging (API), public (confirm/unsubscribe)
-public/            Static admin panel (vanilla SPA)
+  server.js         Express + worker
+  db.js             SQLite schema
+  mailer.js         Nodemailer / Gmail SMTP
+  rotate.js         Gmail pool picker + daily caps
+  secrets.js        App-password encryption
+  placeholders.js   Merge fields
+  spamcheck.js      HTML / filter heuristics
+  linkcheck.js      Cold-mail URL review
+  inbox.js          Placement estimate + IMAP probe
+  validate.js       MX / disposable / role scoring
+  rfqTemplates.js   RFQ starters
+  queue.js          Rate-limited sender
+  routes/gmail.js   Pool CRUD
+  routes/tools.js   Preview, spam, links, validate
+public/             Admin panel
 ```
-
-## License
-
-MIT

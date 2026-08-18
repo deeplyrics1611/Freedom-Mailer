@@ -2,12 +2,13 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../auth.js';
 import { verifyTransport } from '../mailer.js';
+import { encryptSecret } from '../secrets.js';
 
 const router = Router();
 router.use(requireAuth);
 
 const publicFields =
-  'id, label, host, port, secure, username, from_name, from_email, verified, created_at';
+  'id, label, host, port, secure, username, from_name, from_email, verified, kind, in_rotation, daily_limit, sent_today, sent_date, last_used_at, active, created_at';
 
 router.get('/', (req, res) => {
   res.json(
@@ -26,7 +27,7 @@ router.post('/', (req, res) => {
       `INSERT INTO senders (user_id, label, host, port, secure, username, password, from_name, from_email)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(req.user.id, label, host, port, secure ? 1 : 0, username, password, from_name || label, from_email);
+    .run(req.user.id, label, host, port, secure ? 1 : 0, username, encryptSecret(password), from_name || label, from_email);
   res.status(201).json({ id: info.lastInsertRowid });
 });
 

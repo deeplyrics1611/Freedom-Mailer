@@ -19,7 +19,28 @@ router.post('/login', (req, res) => {
 
 router.get('/me', requireAuth, (req, res) => {
   const u = req.user;
-  res.json({ id: u.id, email: u.email, role: u.role, daily_quota: u.daily_quota });
+  res.json({
+    id: u.id,
+    email: u.email,
+    role: u.role,
+    daily_quota: u.daily_quota,
+    company_name: u.company_name || '',
+    physical_address: u.physical_address || '',
+    sender_title: u.sender_title || '',
+  });
+});
+
+router.post('/profile', requireAuth, (req, res) => {
+  const { company_name, physical_address, sender_title } = req.body || {};
+  db.prepare(
+    'UPDATE users SET company_name = ?, physical_address = ?, sender_title = ? WHERE id = ?'
+  ).run(
+    company_name != null ? String(company_name) : req.user.company_name || '',
+    physical_address != null ? String(physical_address) : req.user.physical_address || '',
+    sender_title != null ? String(sender_title) : req.user.sender_title || '',
+    req.user.id
+  );
+  res.json({ ok: true });
 });
 
 router.post('/change-password', requireAuth, (req, res) => {
