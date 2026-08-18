@@ -45,6 +45,8 @@ password immediately under **Account**.
 
 Data is stored in a local SQLite file at `data/freedom-mailer.sqlite`.
 
+For Docker, VPS + HTTPS, and production hosting steps, see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
 ## Configuration
 
 All settings live in `.env` (see `.env.example`). Key ones:

@@ -1,0 +1,15 @@
+services:
+  freedom-mailer:
+    build: .
+    image: freedom-mailer:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      # Persists the SQLite database across container restarts/rebuilds.
+      - freedom-mailer-data:/app/data
+
+volumes:
+  freedom-mailer-data:
