@@ -843,7 +843,15 @@ views.senders = async () => {
     <div class="tabs">
       <button class="active" data-tab="esp">AWS / SendGrid / Mailchimp</button>
       <button data-tab="japan">Japan SMTP + SOCKS5</button>
+      <button data-tab="extract">Extract SMTP</button>
     </div>
+    <form id="extract-form" class="form-grid hidden">
+      <p class="help full">Paste a mailbox you own, a domain, or a control-panel dump (host / port / user / pass, <code>smtp://</code> URI, Japanese 送信サーバー lines). Extract fills the form below — you still type the password if it was not in the paste. MX is only used to guess the outbound host.</p>
+      <div class="field full"><label>Email, domain, or SMTP dump</label>
+        <textarea name="text" id="extract-text" rows="6" placeholder="quotes@yourdomain.com&#10;&#10;SMTP host: smtp.sakura.ne.jp&#10;Port: 587&#10;Username: quotes@yourdomain.com&#10;Password: &#10;SOCKS5: socks.your-vps.jp:1080"></textarea></div>
+      <div class="actions full"><button type="submit">Extract SMTP</button></div>
+      <div class="full" id="extract-out"></div>
+    </form>
     <form id="sender-form" class="form-grid">
       <div class="field full"><label>Provider preset</label>
         <select name="catalog_id" id="smtp-preset">
@@ -887,14 +895,58 @@ views.senders = async () => {
   };
   applyPreset();
   $('smtp-preset').addEventListener('change', applyPreset);
+
+  const applyExtract = (r) => {
+    if (r.catalog_id) $('smtp-preset').value = r.catalog_id;
+    applyPreset();
+    if (r.host) $('smtp-host').value = r.host;
+    if (r.port) $('smtp-port').value = r.port;
+    if (r.secure != null) $('smtp-secure').value = r.secure ? 'true' : 'false';
+    if (r.username) $('smtp-user').value = r.username;
+    const form = $('sender-form');
+    if (r.from_email) form.from_email.value = r.from_email;
+    if (r.from_name) form.from_name.value = r.from_name;
+    if (r.label) form.label.value = r.label;
+    if (r.password) form.password.value = r.password;
+    if (r.socks5_host) form.socks5_host.value = r.socks5_host;
+    if (r.socks5_port) form.socks5_port.value = r.socks5_port;
+    if (r.socks5_user) form.socks5_user.value = r.socks5_user;
+    if (r.socks5_pass) form.socks5_pass.value = r.socks5_pass;
+    $('socks-box').classList.toggle('hot', !!r.japan || !!r.socks5_host);
+    const notes = (r.notes || []).map((n) => esc(n)).join(' · ');
+    $('extract-out').innerHTML = `<div class="notice"><b>${esc(r.host || '—')}</b>:${r.port || 587}
+      ${r.username ? ` · user ${esc(r.username)}` : ''}
+      ${r.from_email ? ` · from ${esc(r.from_email)}` : ''}
+      ${r.mx?.length ? `<div class="muted small">MX ${esc(r.mx.join(', '))}</div>` : ''}
+      ${notes ? `<div class="help">${notes}</div>` : ''}
+      <div class="help">Review the form, add the password if missing, then Add &amp; save.</div></div>`;
+    $('sender-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
   $('view').querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
     $('view').querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
     const group = b.dataset.tab;
-    const first = allPresets.find((p) => p.group === group);
-    if (first) { $('smtp-preset').value = first.id; applyPreset(); }
-    $('socks-box').classList.toggle('hot', group === 'japan');
-    if (group === 'japan') $('socks-box').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    $('extract-form').classList.toggle('hidden', group !== 'extract');
+    if (group === 'esp' || group === 'japan') {
+      const first = allPresets.find((p) => p.group === group);
+      if (first) { $('smtp-preset').value = first.id; applyPreset(); }
+      $('socks-box').classList.toggle('hot', group === 'japan');
+      if (group === 'japan') $('socks-box').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }));
+
+  $('extract-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = $('extract-text').value;
+    $('extract-out').innerHTML = '<p class="muted">Extracting…</p>';
+    try {
+      applyExtract(await api('/api/senders/extract', { method: 'POST', body: { text } }));
+      toast('SMTP extracted into the form');
+    } catch (err) {
+      $('extract-out').innerHTML = `<div class="issue high">${esc(err.message)}</div>`;
+      toast(err.message, 'err');
+    }
+  });
 
   $('sender-form').addEventListener('submit', async (e) => {
     e.preventDefault();

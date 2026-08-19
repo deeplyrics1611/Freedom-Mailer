@@ -4,6 +4,7 @@ import { requireAuth } from '../auth.js';
 import { verifyTransport } from '../mailer.js';
 import { encryptSecret } from '../secrets.js';
 import { smtpGroups, smtpById, socks5Url } from '../smtpCatalog.js';
+import { extractSmtp } from '../smtpExtract.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -14,6 +15,16 @@ const publicFields =
    provider, region, socks5_host, socks5_port, socks5_user`;
 
 router.get('/catalog', (_req, res) => res.json({ groups: smtpGroups() }));
+
+router.post('/extract', async (req, res) => {
+  const text = req.body?.text || req.body?.email || req.body?.host || '';
+  try {
+    const result = await extractSmtp(text, { lookupMx: req.body?.lookup_mx !== false });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
 
 router.get('/', (req, res) => {
   res.json(

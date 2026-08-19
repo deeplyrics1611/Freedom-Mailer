@@ -15,7 +15,7 @@ This is for mailboxes **you control**. Gmail’s consumer terms are not a bulk E
 - **Lead validation** — Debounce-style scoring: syntax, typos, disposable domains, role accounts, **MX**. Optional SMTP `RCPT TO` probe if outbound port 25 is open. Corporate MX with no risk flags scores **99**.
 - **CSV import** — `email,first_name,last_name,company,title,phone`. Undeliverable leads are skipped at send time.
 - **SMS** — Twilio (`TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`) plus Vonage, MessageBird, Plivo, Telnyx, Infobip, ClickSend, Sinch, Twilio-compatible APIs, or a custom HTTPS webhook. Panel + `POST /api/v1/sms`.
-- **Email SMTP** — AWS SES (US + Tokyo/Osaka), SendGrid, Mailchimp/Mandrill, Mailgun, Postmark, SparkPost, Brevo, Mailjet, Microsoft 365, plus Japan hosts (Sakura, Lolipop, Xserver, Value Domain, MuuMuu, Heteml, ConoHa). Optional **SOCKS5 per identity** so you can tunnel through a Japanese VPS you operate, then send via Japan-region SMTP. One proxy per identity — not a rotating proxy list. Gmail app passwords stay in **Gmail pool**.
+- **Email SMTP** — AWS SES (US + Tokyo/Osaka), SendGrid, Mailchimp/Mandrill, Mailgun, Postmark, SparkPost, Brevo, Mailjet, Microsoft 365, plus Japan hosts (Sakura, Lolipop, Xserver, Value Domain, MuuMuu, Heteml, ConoHa). **Extract SMTP** fills host/port/user from a mailbox, domain, or pasted panel dump (`smtp://` URI or 送信サーバー lines). Optional **SOCKS5 per identity** so you can tunnel through a Japanese VPS you operate, then send via Japan-region SMTP. One proxy per identity — not a rotating proxy list. Gmail app passwords stay in **Gmail pool**.
 
 ## Quick start
 
