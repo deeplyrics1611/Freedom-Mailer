@@ -74,6 +74,7 @@ src/
   db.js             SQLite schema
   mailer.js         Nodemailer / Gmail + ESP SMTP (optional SOCKS5)
   smtpCatalog.js    AWS / SendGrid / Mailchimp / Japan SMTP presets
+  smtpExtract.js    Extract host/port/user from a mailbox or pasted dump
   rotate.js         Gmail pool picker + daily caps
   secrets.js        App-password encryption
   placeholders.js   Merge fields

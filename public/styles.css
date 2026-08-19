@@ -260,6 +260,7 @@ button.chip { background: #000; border: 1px solid var(--border); color: var(--te
   .split { grid-template-columns: 1fr; }
   #app { grid-template-columns: 1fr; }
   .fx-world { opacity: .35; }
+  .fx-phoenix { width: 140vw; bottom: -8%; opacity: .45; }
 }
 .preview-box { background: #000; color: #ff1a1a; border: 1px solid var(--border); padding: 16px; border-radius: var(--radius); min-height: 120px; font-size: 14px; }
 .score-big { font-size: 42px; font-weight: 800; letter-spacing: .04em; font-family: var(--display); color: var(--text); }
